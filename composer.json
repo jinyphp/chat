@@ -1,0 +1,32 @@
+{
+    "name": "jiny/chat",
+    "description": "Jiny Chat System with Sharding Support",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Jiny Team",
+            "email": "dev@jiny.dev"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^12.0",
+        "livewire/livewire": "^3.0",
+        "stichoza/google-translate-php": "^5.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Jiny\\Chat\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Jiny\\Chat\\ChatServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

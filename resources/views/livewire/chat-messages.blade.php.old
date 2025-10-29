@@ -1,0 +1,632 @@
+<div class="card h-100 border-0 d-flex flex-column">
+    <!-- 채팅 메시지 컴포넌트 -->
+    <!-- Card Header - 채팅방 정보 및 설정 -->
+    <div class="card-header bg-white border-bottom px-3 py-3 flex-shrink-0">
+        <div class="d-flex align-items-center justify-content-between">
+            <div>
+                <h6 class="mb-0 fw-bold text-dark d-flex align-items-center">
+                    <i class="fas fa-comments text-primary me-2"></i>
+                    채팅
+                </h6>
+                <small class="text-muted">
+                    총 {{ count($messages) }}개의 메시지
+                </small>
+            </div>
+            <!-- 채팅방 설정 드롭다운 -->
+            <div class="dropdown">
+                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    <i class="fas fa-cog"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="#" wire:click="showBackgroundSettings">
+                        <i class="fas fa-palette me-2"></i> 배경색 변경
+                    </a></li>
+                    <li><a class="dropdown-item" href="#" wire:click="loadMoreMessages">
+                        <i class="fas fa-history me-2"></i> 이전 메시지 불러오기
+                    </a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <!-- Card Body - 메시지 목록 -->
+    <div class="card-body p-0 overflow-auto flex-grow-1"
+         style="background-color: {{ $backgroundColor ?? '#ffffff' }}; scroll-behavior: smooth;"
+         wire:poll.3s="pollForNewMessages"
+         id="messages-container">
+        <div class="p-3">
+            @if(!empty($messages))
+                @foreach($messages as $message)
+                    <div class="mb-3">
+                        @if($message['is_mine'])
+                            <!-- 내 메시지 (오른쪽 정렬) -->
+                            <div class="d-flex justify-content-end align-items-start">
+                                <!-- 드롭다운 메뉴 -->
+                                <div class="dropdown me-2 mt-1">
+                                    <button class="btn btn-sm btn-link text-muted p-1" type="button" data-bs-toggle="dropdown">
+                                        <i class="fas fa-ellipsis-v"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <li><a class="dropdown-item" href="#" onclick="copyMessageContent({{ $message['id'] }})">
+                                            <i class="fas fa-copy me-2"></i> Copy
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" wire:click="replyToMessage({{ $message['id'] }})">
+                                            <i class="fas fa-reply me-2"></i> Reply
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" wire:click="forwardMessage({{ $message['id'] }})">
+                                            <i class="fas fa-share me-2"></i> Forward
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" wire:click="toggleFavourite({{ $message['id'] }})">
+                                            @if(in_array($message['id'], $favouriteMessages))
+                                                <i class="fas fa-star me-2 text-warning"></i> 즐겨찾기 해제
+                                            @else
+                                                <i class="far fa-star me-2"></i> 즐겨찾기
+                                            @endif
+                                        </a></li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><a class="dropdown-item text-danger" href="#" wire:click="deleteMessage({{ $message['id'] }})"
+                                               onclick="return confirm('메시지를 삭제하시겠습니까?')">
+                                            <i class="fas fa-trash me-2"></i> Delete
+                                        </a></li>
+                                    </ul>
+                                </div>
+                                <!-- 메시지 컨텐츠 -->
+                                <div class="text-end d-flex flex-column align-items-end" style="max-width: 70%;">
+                                    <div class="px-3 py-2 rounded-3 shadow-sm d-inline-block"
+                                         style="background-color: #fff3cd; color: #664d03; border: 1px solid #ffe69c;"
+                                         id="message-{{ $message['id'] }}">
+                                        @if(isset($message['reply_to']))
+                                            <!-- 답장 원본 메시지 미리보기 -->
+                                            <div class="bg-white bg-opacity-50 border-start border-primary border-2 ps-2 py-1 mb-2 rounded-end cursor-pointer"
+                                                 style="font-size: 0.85rem;"
+                                                 onclick="scrollToMessage({{ $message['reply_to']['id'] }})"
+                                                 title="원본 메시지로 이동">
+                                                <div class="text-primary fw-bold" style="font-size: 0.75rem;">{{ $message['reply_to']['sender_name'] }}님에게 답장</div>
+                                                <div class="text-muted">{{ strlen($message['reply_to']['content']) > 50 ? substr($message['reply_to']['content'], 0, 50) . '...' : $message['reply_to']['content'] }}</div>
+                                            </div>
+                                        @endif
+                                        @if($message['type'] === 'text')
+                                            {{ $message['content'] }}
+                                        @elseif(isset($message['file']))
+                                            @include('jiny-chat::livewire.partials.file-message', ['file' => $message['file']])
+                                        @endif
+                                    </div>
+                                    <div class="mt-1">
+                                        <small class="text-muted" style="font-size: 0.75rem;">{{ $message['created_at'] }}</small>
+                                        @if(in_array($message['id'], $favouriteMessages))
+                                            <i class="fas fa-star text-warning ms-1" style="font-size: 0.7rem;" title="즐겨찾기"></i>
+                                        @endif
+                                    </div>
+                                </div>
+                            </div>
+                        @else
+                            <!-- 상대방 메시지 (왼쪽 정렬) -->
+                            <div class="d-flex align-items-start">
+                                <!-- 아바타 -->
+                                <div class="me-2 flex-shrink-0">
+                                    @if($message['sender_avatar'])
+                                        <img src="{{ $message['sender_avatar'] }}" alt="{{ $message['sender_name'] }}"
+                                             class="rounded-circle" style="width: 40px; height: 40px; object-fit: cover;">
+                                    @else
+                                        <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold"
+                                             style="width: 40px; height: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                            {{ mb_substr($message['sender_name'], 0, 1) }}
+                                        </div>
+                                    @endif
+                                </div>
+                                <!-- 메시지 컨텐츠 -->
+                                <div class="d-flex flex-column" style="max-width: 70%;">
+                                    <div class="d-flex align-items-center mb-1">
+                                        <span class="fw-medium text-primary me-2">{{ $message['sender_name'] }}</span>
+                                        <small class="text-muted" style="font-size: 0.75rem;">{{ $message['created_at'] }}</small>
+                                        @if(in_array($message['id'], $favouriteMessages))
+                                            <i class="fas fa-star text-warning ms-1" style="font-size: 0.7rem;" title="즐겨찾기"></i>
+                                        @endif
+                                    </div>
+                                    <div class="bg-light border px-3 py-2 rounded-3 shadow-sm d-inline-block"
+                                         style="width: fit-content;"
+                                         id="message-{{ $message['id'] }}">
+                                        @if(isset($message['reply_to']))
+                                            <!-- 답장 원본 메시지 미리보기 -->
+                                            <div class="bg-white border-start border-primary border-2 ps-2 py-1 mb-2 rounded-end cursor-pointer"
+                                                 style="font-size: 0.85rem;"
+                                                 onclick="scrollToMessage({{ $message['reply_to']['id'] }})"
+                                                 title="원본 메시지로 이동">
+                                                <div class="text-primary fw-bold" style="font-size: 0.75rem;">{{ $message['reply_to']['sender_name'] }}님에게 답장</div>
+                                                <div class="text-muted">{{ strlen($message['reply_to']['content']) > 50 ? substr($message['reply_to']['content'], 0, 50) . '...' : $message['reply_to']['content'] }}</div>
+                                            </div>
+                                        @endif
+                                        @if($message['type'] === 'text')
+                                            {{ $message['content'] }}
+                                        @elseif(isset($message['file']))
+                                            @include('jiny-chat::livewire.partials.file-message', ['file' => $message['file']])
+                                        @endif
+                                    </div>
+                                </div>
+                                <!-- 드롭다운 메뉴 -->
+                                <div class="dropdown ms-2 mt-1 flex-shrink-0">
+                                    <button class="btn btn-sm btn-link text-muted p-1" type="button" data-bs-toggle="dropdown">
+                                        <i class="fas fa-ellipsis-v"></i>
+                                    </button>
+                                    <ul class="dropdown-menu">
+                                        <li><a class="dropdown-item" href="#" onclick="copyMessageContent({{ $message['id'] }})">
+                                            <i class="fas fa-copy me-2"></i> Copy
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" wire:click="replyToMessage({{ $message['id'] }})">
+                                            <i class="fas fa-reply me-2"></i> Reply
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" wire:click="forwardMessage({{ $message['id'] }})">
+                                            <i class="fas fa-share me-2"></i> Forward
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" wire:click="toggleFavourite({{ $message['id'] }})">
+                                            @if(in_array($message['id'], $favouriteMessages))
+                                                <i class="fas fa-star me-2 text-warning"></i> 즐겨찾기 해제
+                                            @else
+                                                <i class="far fa-star me-2"></i> 즐겨찾기
+                                            @endif
+                                        </a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        @endif
+                    </div>
+                @endforeach
+            @else
+                <div class="text-center text-muted my-5">
+                    <i class="fas fa-comments fa-3x mb-3 opacity-50"></i>
+                    <p>아직 메시지가 없습니다.</p>
+                    <p>첫 번째 메시지를 보내보세요!</p>
+                </div>
+            @endif
+        </div>
+        <!-- 타이핑 상태 표시 -->
+        @if(!empty($typingUsers))
+            <div class="px-3 py-2 bg-light">
+                <small class="text-muted">
+                    <i class="fas fa-circle-notch fa-spin me-1"></i>
+                    {{ implode(', ', $typingUsers) }}님이 입력 중...
+                </small>
+            </div>
+        @endif
+    </div>
+    <!-- Card Footer - 메시지 입력 영역 -->
+    <div class="card-footer border-top bg-white p-3 flex-shrink-0">
+        <!-- 에러 메시지 표시 -->
+        @if(session()->has('error'))
+            <div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+                {{ session('error') }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        @endif
+        <!-- 파일 업로드 영역 -->
+        @if($showFileUpload)
+            <div class="mb-3 p-3 bg-light rounded">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0">파일 업로드</h6>
+                    <button wire:click="toggleFileUpload" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <form wire:submit.prevent="uploadFiles">
+                    <div class="mb-3">
+                        <input type="file"
+                               wire:model="uploadedFiles"
+                               multiple
+                               class="form-control"
+                               accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar">
+                        @error('uploadedFiles.*')
+                            <div class="text-danger small mt-1">{{ $message }}</div>
+                        @enderror
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit"
+                                class="btn btn-primary btn-sm"
+                                wire:loading.attr="disabled"
+                                wire:target="uploadFiles">
+                            <div wire:loading.remove wire:target="uploadFiles">
+                                <i class="fas fa-upload"></i> 업로드
+                            </div>
+                            <div wire:loading wire:target="uploadFiles">
+                                <i class="fas fa-spinner fa-spin"></i> 업로드 중...
+                            </div>
+                        </button>
+                        <button type="button"
+                                wire:click="toggleFileUpload"
+                                class="btn btn-secondary btn-sm">
+                            취소
+                        </button>
+                    </div>
+                </form>
+                <small class="text-muted d-block mt-2">
+                    <i class="fas fa-info-circle"></i>
+                    최대 10MB까지 업로드 가능합니다. (이미지, 문서, 동영상, 음성 파일)
+                </small>
+            </div>
+        @endif
+        <!-- 답장 미리보기 -->
+        @if($replyingTo)
+            <div class="bg-light border-start border-primary border-3 p-2 mb-2 rounded-end">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <small class="text-primary fw-bold">{{ $replyMessage['sender_name'] ?? 'Unknown' }}님에게 답장</small>
+                        <div class="text-muted small">
+                            {{ strlen($replyMessage['content'] ?? '') > 50 ? substr($replyMessage['content'] ?? '', 0, 50) . '...' : ($replyMessage['content'] ?? '') }}
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-sm" wire:click="cancelReply"></button>
+                </div>
+            </div>
+        @endif
+        <!-- 메시지 입력 폼 -->
+        <form wire:submit.prevent="sendMessage" class="d-flex gap-2 align-items-end">
+            <button type="button"
+                    wire:click="toggleFileUpload"
+                    class="btn btn-outline-secondary d-flex align-items-center justify-content-center"
+                    style="border-radius: 50%; width: 45px; height: 45px;">
+                <i class="fas fa-paperclip"></i>
+            </button>
+            <div class="flex-grow-1">
+                <input type="text"
+                       wire:model.defer="newMessage"
+                       wire:keydown.enter="sendMessage"
+                       wire:keydown="startTyping"
+                       wire:keyup="stopTyping"
+                       class="form-control"
+                       placeholder="메시지를 입력하세요..."
+                       style="border-radius: 25px;"
+                       maxlength="1000">
+            </div>
+            <button type="submit"
+                    class="btn btn-primary d-flex align-items-center justify-content-center"
+                    style="border-radius: 50%; width: 45px; height: 45px;"
+                    wire:loading.attr="disabled"
+                    wire:target="sendMessage">
+                <div wire:loading.remove wire:target="sendMessage">
+                    <i class="fas fa-paper-plane"></i>
+                </div>
+                <div wire:loading wire:target="sendMessage">
+                    <i class="fas fa-spinner fa-spin"></i>
+                </div>
+            </button>
+        </form>
+        <!-- 디버그 정보 -->
+        <div class="mt-2">
+            <small class="text-muted">
+                Room ID: {{ $roomId }} | User: {{ $user->name ?? 'Unknown' }} ({{ $user->uuid ?? 'No UUID' }})
+            </small>
+        </div>
+    </div>
+    <!-- 배경색 설정 모달 -->
+    @if($showBackgroundModal)
+        <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-palette text-primary"></i> 채팅방 배경색 변경
+                        </h5>
+                        <button type="button" class="btn-close" wire:click="closeBackgroundSettings"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form wire:submit.prevent="updateBackgroundColor">
+                            <div class="mb-3">
+                                <label class="form-label">배경색 선택</label>
+                                <div class="d-flex gap-2 align-items-center mb-3">
+                                    <input type="color" class="form-control form-control-color" wire:model="backgroundColor">
+                                    <input type="text" class="form-control" wire:model="backgroundColor" placeholder="#ffffff">
+                                </div>
+                                <!-- 미리 정의된 색상 팔레트 -->
+                                <div class="row g-2">
+                                    <div class="col-2">
+                                        <div class="bg-white border rounded p-2 text-center" style="cursor: pointer;" wire:click="setBackgroundColor('#ffffff')">
+                                            <small>기본</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="rounded p-2 text-center text-white" style="background: #e3f2fd; color: #333 !important; cursor: pointer;" wire:click="setBackgroundColor('#e3f2fd')">
+                                            <small>하늘</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="rounded p-2 text-center text-white" style="background: #f3e5f5; color: #333 !important; cursor: pointer;" wire:click="setBackgroundColor('#f3e5f5')">
+                                            <small>라벤더</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="rounded p-2 text-center text-white" style="background: #e8f5e8; color: #333 !important; cursor: pointer;" wire:click="setBackgroundColor('#e8f5e8')">
+                                            <small>민트</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="rounded p-2 text-center text-white" style="background: #fff3e0; color: #333 !important; cursor: pointer;" wire:click="setBackgroundColor('#fff3e0')">
+                                            <small>복숭아</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-2">
+                                        <div class="rounded p-2 text-center text-white" style="background: #fce4ec; color: #333 !important; cursor: pointer;" wire:click="setBackgroundColor('#fce4ec')">
+                                            <small>핑크</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-secondary" wire:click="closeBackgroundSettings">취소</button>
+                                <button type="submit" class="btn btn-primary">적용</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+    <script>
+    // 스크롤을 하단으로 이동하는 함수
+    function scrollToBottom(smooth = false) {
+        const messagesContainer = document.getElementById('messages-container') || document.querySelector('.overflow-auto');
+        if (messagesContainer) {
+            if (smooth) {
+                messagesContainer.scrollTo({
+                    top: messagesContainer.scrollHeight,
+                    behavior: 'smooth'
+                });
+            } else {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+        }
+    }
+    // 사용자가 스크롤 하단 근처에 있는지 확인
+    function isNearBottom() {
+        const messagesContainer = document.getElementById('messages-container') || document.querySelector('.overflow-auto');
+        if (!messagesContainer) return true;
+        const scrollTop = messagesContainer.scrollTop;
+        const scrollHeight = messagesContainer.scrollHeight;
+        const clientHeight = messagesContainer.clientHeight;
+        // 하단에서 100px 이내이면 true
+        return (scrollHeight - scrollTop - clientHeight) < 100;
+    }
+    // 새 메시지가 올 때 스크롤 처리
+    document.addEventListener('livewire:updated', function () {
+        // 사용자가 하단 근처에 있을 때만 자동 스크롤
+        if (isNearBottom()) {
+            setTimeout(() => scrollToBottom(), 50);
+        }
+    });
+    // 컴포넌트 로드 시 스크롤을 맨 아래로
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(() => scrollToBottom(), 100);
+        setTimeout(() => scrollToBottom(), 500); // 이미지 로드 등을 고려한 추가 시도
+    });
+    // Livewire 컴포넌트 초기화 완료 시
+    document.addEventListener('livewire:init', function() {
+        setTimeout(() => scrollToBottom(), 100);
+    });
+    // 새 메시지 전송 후 스크롤
+    window.addEventListener('message-sent', function() {
+        setTimeout(() => scrollToBottom(), 50);
+    });
+    // 파일 업로드 완료 후 스크롤
+    window.addEventListener('file-uploaded', function() {
+        setTimeout(() => scrollToBottom(), 100);
+    });
+    // Livewire 이벤트 리스너 - 스크롤 하단 이동
+    document.addEventListener('scroll-to-bottom', function() {
+        setTimeout(() => scrollToBottom(), 50);
+    });
+    // 윈도우 크기 변경 시 스크롤 유지
+    window.addEventListener('resize', function() {
+        if (isNearBottom()) {
+            setTimeout(() => scrollToBottom(), 100);
+        }
+    });
+    // 이미지 로드 완료 시 스크롤 조정
+    document.addEventListener('load', function() {
+        setTimeout(() => scrollToBottom(), 200);
+    }, true);
+    // Livewire 컴포넌트가 완전히 로드된 후 스크롤
+    window.addEventListener('load', function() {
+        setTimeout(() => scrollToBottom(), 300);
+    });
+    // 메시지 내용 복사 (ID 기반)
+    function copyMessageContent(messageId) {
+        const messageElement = document.getElementById('message-' + messageId);
+        if (messageElement) {
+            const text = messageElement.textContent || messageElement.innerText;
+            copyToClipboard(text.trim());
+        }
+    }
+    // 클립보드에 텍스트 복사
+    function copyToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            // 최신 브라우저의 Clipboard API 사용
+            navigator.clipboard.writeText(text).then(function() {
+                // 성공 알림 (선택사항)
+                showToast('메시지가 복사되었습니다.', 'success');
+            }).catch(function(err) {
+                console.error('복사 실패:', err);
+                fallbackCopyTextToClipboard(text);
+            });
+        } else {
+            // 구형 브라우저를 위한 폴백
+            fallbackCopyTextToClipboard(text);
+        }
+    }
+    // 구형 브라우저용 복사 함수
+    function fallbackCopyTextToClipboard(text) {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+                showToast('메시지가 복사되었습니다.', 'success');
+            } else {
+                showToast('복사에 실패했습니다.', 'error');
+            }
+        } catch (err) {
+            console.error('Fallback 복사 실패:', err);
+            showToast('복사를 지원하지 않는 브라우저입니다.', 'error');
+        }
+        document.body.removeChild(textArea);
+    }
+    // 개선된 토스트 알림
+    function showToast(message, type = 'info') {
+        // 토스트 색상 설정
+        let bgClass = 'bg-dark';
+        let iconClass = 'fas fa-info-circle';
+        switch(type) {
+            case 'success':
+                bgClass = 'bg-success';
+                iconClass = 'fas fa-check-circle';
+                break;
+            case 'error':
+                bgClass = 'bg-danger';
+                iconClass = 'fas fa-exclamation-triangle';
+                break;
+            case 'warning':
+                bgClass = 'bg-warning text-dark';
+                iconClass = 'fas fa-exclamation-circle';
+                break;
+        }
+        // 토스트 요소 생성
+        const toast = document.createElement('div');
+        toast.className = `position-fixed top-0 start-50 translate-middle-x ${bgClass} text-white px-3 py-2 rounded shadow-lg d-flex align-items-center`;
+        toast.style.zIndex = '9999';
+        toast.style.marginTop = '20px';
+        toast.style.transition = 'all 0.3s ease';
+        toast.innerHTML = `
+            <i class="${iconClass} me-2"></i>
+            <span>${message}</span>
+        `;
+        document.body.appendChild(toast);
+        // 애니메이션 효과
+        setTimeout(() => {
+            toast.style.transform = 'translateX(-50%) translateY(10px)';
+        }, 10);
+        // 3초 후 자동 제거
+        setTimeout(function() {
+            if (toast.parentNode) {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(-50%) translateY(-20px)';
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 300);
+            }
+        }, 3000);
+    }
+    // 메시지 복사 이벤트 리스너
+    document.addEventListener('copyMessage', function(event) {
+        const messageId = event.detail.messageId;
+        const messageElement = document.getElementById('message-' + messageId);
+        if (messageElement) {
+            const text = messageElement.innerText || messageElement.textContent;
+            copyToClipboard(text);
+        }
+    });
+    // 메시지 전달 이벤트 리스너
+    document.addEventListener('copyForwardMessage', function(event) {
+        const messageId = event.detail.messageId;
+        const messageText = event.detail.messageText;
+        const senderName = event.detail.senderName;
+        const forwardText = `[전달] ${senderName}: ${messageText}`;
+        copyToClipboard(forwardText);
+        showToast('메시지가 전달용으로 복사되었습니다', 'success');
+    });
+    // 답장 표시 함수
+    function showReplyPreview(messageId, content, senderName, timestamp) {
+        const replyPreview = document.createElement('div');
+        replyPreview.id = 'reply-preview';
+        replyPreview.className = 'bg-light border-start border-primary border-3 p-2 mb-2 rounded-end';
+        replyPreview.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="flex-grow-1">
+                    <small class="text-primary fw-bold">${senderName}님에게 답장</small>
+                    <div class="text-muted small">${content.length > 50 ? content.substring(0, 50) + '...' : content}</div>
+                </div>
+                <button type="button" class="btn-close btn-sm" onclick="cancelReply()"></button>
+            </div>
+        `;
+        // 기존 답장 미리보기 제거
+        const existingPreview = document.getElementById('reply-preview');
+        if (existingPreview) {
+            existingPreview.remove();
+        }
+        // 메시지 입력 영역 위에 미리보기 추가
+        const messageForm = document.querySelector('form[wire\\:submit\\.prevent="sendMessage"]');
+        if (messageForm) {
+            messageForm.insertBefore(replyPreview, messageForm.firstChild);
+        }
+        // 입력창에 포커스
+        const messageInput = document.querySelector('textarea[wire\\:model="newMessage"]');
+        if (messageInput) {
+            messageInput.focus();
+        }
+    }
+    // 답장 취소 함수
+    function cancelReply() {
+        const replyPreview = document.getElementById('reply-preview');
+        if (replyPreview) {
+            replyPreview.remove();
+        }
+        // Livewire 컴포넌트에 답장 취소 알림
+        @this.call('cancelReply');
+    }
+    // 답장 이벤트 리스너
+    document.addEventListener('replyToMessage', function(event) {
+        const data = event.detail;
+        showReplyPreview(data.messageId, data.content, data.senderName, data.timestamp);
+        showToast(`${data.senderName}님의 메시지에 답장합니다`, 'info');
+    });
+    // 즐겨찾기 토글 이벤트 리스너
+    document.addEventListener('toggleFavourite', function(event) {
+        const messageId = event.detail.messageId;
+        const isFavourite = event.detail.isFavourite;
+        if (isFavourite) {
+            showToast('메시지를 즐겨찾기에 추가했습니다', 'success');
+        } else {
+            showToast('메시지를 즐겨찾기에서 제거했습니다', 'info');
+        }
+    });
+    // 메시지 복사 버튼 클릭 함수 (onclick용)
+    function copyMessageContent(messageId) {
+        const messageElement = document.getElementById('message-' + messageId);
+        if (messageElement) {
+            const text = messageElement.innerText || messageElement.textContent;
+            copyToClipboard(text);
+        }
+    }
+    // 특정 메시지로 스크롤하는 함수
+    function scrollToMessage(messageId) {
+        const messageElement = document.getElementById('message-' + messageId);
+        if (messageElement) {
+            // 메시지가 보이도록 스크롤
+            messageElement.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+            // 메시지 하이라이트 효과
+            messageElement.style.transition = 'all 0.3s ease';
+            messageElement.style.boxShadow = '0 0 10px rgba(0, 123, 255, 0.5)';
+            messageElement.style.transform = 'scale(1.02)';
+            // 3초 후 하이라이트 제거
+            setTimeout(() => {
+                messageElement.style.boxShadow = '';
+                messageElement.style.transform = '';
+            }, 3000);
+        }
+    }
+    </script>
+    <style>
+        .cursor-pointer {
+            cursor: pointer;
+        }
+        .cursor-pointer:hover {
+            opacity: 0.8;
+        }
+    </style>
+</div>
