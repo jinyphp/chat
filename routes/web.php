@@ -209,3 +209,10 @@ Route::get('/chat/docs', function () {
 
     return view('jiny-chat::www.api', compact('technologies'));
 })->name('chat.docs');
+
+// 초대 링크 관련 라우트
+Route::get('/chat/join/{token}', [\Jiny\Chat\Http\Controllers\ChatInviteController::class, 'join'])
+    ->name('chat.join');
+
+Route::get('/chat/invite/{token}', [\Jiny\Chat\Http\Controllers\ChatInviteController::class, 'preview'])
+    ->name('chat.invite.preview');

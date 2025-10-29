@@ -76,13 +76,57 @@
                                 </small>
                             </div>
 
-                            <!-- 언어 설정 버튼 (방장/관리자만 표시) -->
-                            @if($participant && in_array($participant->role, ['owner', 'admin']))
-                                <button class="btn btn-sm btn-outline-secondary"
-                                        wire:click="showLanguageSettings({{ $p->id }})"
-                                        style="font-size: 11px; padding: 3px 8px;">
-                                    <i class="fas fa-language"></i>
-                                </button>
+                            <!-- 액션 버튼들 -->
+                            @php
+                                $isCurrentUser = $user && $p->user_uuid === $user->uuid;
+                                $isOwnerOrAdmin = $participant && in_array($participant->role, ['owner', 'admin']);
+                                $canEditOthers = $isOwnerOrAdmin && !$isCurrentUser;
+                                $hasAnyOptions = $isCurrentUser || $canEditOthers;
+                            @endphp
+
+                            @if($hasAnyOptions)
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                                            type="button" data-bs-toggle="dropdown"
+                                            style="font-size: 11px; padding: 3px 8px;">
+                                        <i class="fas fa-ellipsis-v"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <!-- 디버깅 정보 (개발용) -->
+                                        @if(config('app.debug'))
+                                            <li><small class="dropdown-item-text text-muted">
+                                                현재: {{ $user->uuid ?? 'null' }}<br>
+                                                참여자: {{ $p->user_uuid }}<br>
+                                                본인: {{ $isCurrentUser ? 'O' : 'X' }}<br>
+                                                권한: {{ $participant->role ?? 'none' }}
+                                            </small></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                        @endif
+
+                                        <!-- 자신의 정보 수정 (본인만) -->
+                                        @if($isCurrentUser)
+                                            <li><a class="dropdown-item" href="#" wire:click="editOwnProfile">
+                                                <i class="fas fa-user-edit me-2"></i> 내 정보 수정
+                                            </a></li>
+                                        @endif
+
+                                        <!-- 방장/관리자 기능 (다른 사람만) -->
+                                        @if($canEditOthers)
+                                            <li><a class="dropdown-item" href="#" wire:click="editParticipant({{ $p->id }})">
+                                                <i class="fas fa-edit me-2"></i> 정보 수정
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" wire:click="showLanguageSettings({{ $p->id }})">
+                                                <i class="fas fa-language me-2"></i> 언어 설정
+                                            </a></li>
+                                            @if($p->role !== 'owner')
+                                                <li><hr class="dropdown-divider"></li>
+                                                <li><a class="dropdown-item text-danger" href="#" wire:click="confirmRemoveParticipant({{ $p->id }})">
+                                                    <i class="fas fa-user-times me-2"></i> 멤버 제거
+                                                </a></li>
+                                            @endif
+                                        @endif
+                                    </ul>
+                                </div>
                             @endif
                         </div>
 
@@ -223,17 +267,100 @@
                         <div class="mb-3">
                             <label class="form-label">초대 링크</label>
                             <div class="input-group">
-                                <input type="text" class="form-control" value="{{ $inviteLink }}" readonly>
-                                <button class="btn btn-outline-secondary"
-                                        onclick="navigator.clipboard.writeText('{{ $inviteLink }}')">
+                                <input type="text" class="form-control" value="{{ $inviteLink }}" readonly id="inviteLink">
+                                <button class="btn btn-outline-secondary" onclick="copyInviteLink()">
                                     <i class="fas fa-copy"></i> 복사
                                 </button>
                             </div>
+                            <small class="text-muted">이 링크를 공유하여 다른 사용자를 채팅방에 초대할 수 있습니다.</small>
                         </div>
+
+                        <div class="mb-3">
+                            <div class="alert alert-info">
+                                <h6 class="alert-heading"><i class="fas fa-info-circle me-1"></i> 초대 링크 정보</h6>
+                                <ul class="mb-0 small">
+                                    <li><strong>유효기간:</strong> 24시간</li>
+                                    <li><strong>사용 제한:</strong> 무제한</li>
+                                    <li><strong>자동 참여:</strong> 링크 클릭 시 즉시 채팅방 참여</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6>공유 방법</h6>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-primary btn-sm" onclick="shareViaEmail()">
+                                    <i class="fas fa-envelope me-1"></i> 이메일
+                                </button>
+                                <button class="btn btn-outline-success btn-sm" onclick="shareViaKakao()">
+                                    <i class="fab fa-kaggle me-1"></i> 카카오톡
+                                </button>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="shareGeneric()">
+                                    <i class="fas fa-share me-1"></i> 기타
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="d-flex justify-content-end">
                             <button type="button" class="btn btn-primary" wire:click="closeInvite">확인</button>
                         </div>
                     </div>
+
+                    <script>
+                        function copyInviteLink() {
+                            const linkInput = document.getElementById('inviteLink');
+                            linkInput.select();
+                            linkInput.setSelectionRange(0, 99999);
+
+                            try {
+                                navigator.clipboard.writeText(linkInput.value).then(function() {
+                                    showToast('초대 링크가 클립보드에 복사되었습니다.', 'success');
+                                });
+                            } catch (err) {
+                                document.execCommand('copy');
+                                showToast('초대 링크가 복사되었습니다.', 'success');
+                            }
+                        }
+
+                        function shareViaEmail() {
+                            const subject = encodeURIComponent('채팅방 초대');
+                            const body = encodeURIComponent(`안녕하세요! 채팅방에 초대드립니다.\n\n아래 링크를 클릭하여 참여해주세요:\n${document.getElementById('inviteLink').value}`);
+                            window.open(`mailto:?subject=${subject}&body=${body}`);
+                        }
+
+                        function shareViaKakao() {
+                            // 카카오톡 공유 (실제 구현 시 카카오 SDK 필요)
+                            copyInviteLink();
+                            showToast('링크가 복사되었습니다. 카카오톡에서 붙여넣기 해주세요.', 'info');
+                        }
+
+                        function shareGeneric() {
+                            if (navigator.share) {
+                                navigator.share({
+                                    title: '채팅방 초대',
+                                    text: '채팅방에 초대드립니다!',
+                                    url: document.getElementById('inviteLink').value
+                                });
+                            } else {
+                                copyInviteLink();
+                            }
+                        }
+
+                        function showToast(message, type = 'info') {
+                            // 간단한 토스트 알림 (실제 구현 시 Toast 라이브러리 사용)
+                            const toast = document.createElement('div');
+                            toast.className = `alert alert-${type} position-fixed`;
+                            toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+                            toast.innerHTML = `${message} <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>`;
+                            document.body.appendChild(toast);
+
+                            setTimeout(() => {
+                                if (toast.parentElement) {
+                                    toast.remove();
+                                }
+                            }, 3000);
+                        }
+                    </script>
                 </div>
             </div>
         </div>
@@ -322,6 +449,129 @@
                                 </div>
                             </form>
                         @endif
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    <!-- 참여자 정보 수정 모달 -->
+    @if($showEditModal)
+        <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-user-edit text-primary"></i>
+                            {{ $editingParticipant && $editingParticipant->user_uuid === $user->uuid ? '내 정보 수정' : '참여자 정보 수정' }}
+                        </h5>
+                        <button type="button" class="btn-close" wire:click="closeEditModal"></button>
+                    </div>
+                    <div class="modal-body">
+                        @if($editingParticipant)
+                            <form wire:submit.prevent="updateParticipantInfo">
+                                <div class="mb-3 text-center">
+                                    <div class="d-flex align-items-center justify-content-center mb-3">
+                                        @if ($editingParticipant->avatar)
+                                            <img src="{{ $editingParticipant->avatar }}" alt="{{ $editingParticipant->name }}"
+                                                 class="rounded-circle me-2" style="width: 48px; height: 48px; object-fit: cover;">
+                                        @else
+                                            <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold me-2"
+                                                 style="width: 48px; height: 48px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                                {{ mb_substr($editingParticipant->name, 0, 1) }}
+                                            </div>
+                                        @endif
+                                        <div>
+                                            <div class="fw-bold">{{ $editingParticipant->name }}</div>
+                                            <small class="text-muted">{{ $editingParticipant->email }}</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">표시 이름</label>
+                                    <input type="text" class="form-control" wire:model="editName"
+                                           placeholder="채팅방에서 표시될 이름">
+                                    @error('editName')
+                                        <div class="text-danger small">{{ $message }}</div>
+                                    @enderror
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">언어</label>
+                                    <select class="form-select" wire:model="editLanguage" style="font-size: 16px;">
+                                        @foreach($availableLanguages as $lang)
+                                            <option value="{{ $lang['code'] }}">
+                                                {{ $lang['flag'] ?? '🌐' }}  {{ $lang['native_name'] }} ({{ $lang['name'] }})
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                    @error('editLanguage')
+                                        <div class="text-danger small">{{ $message }}</div>
+                                    @enderror
+                                </div>
+
+                                @if($participant && in_array($participant->role, ['owner', 'admin']) && $editingParticipant->user_uuid !== $user->uuid)
+                                    <div class="mb-3">
+                                        <label class="form-label">역할</label>
+                                        <select class="form-select" wire:model="editRole">
+                                            <option value="member">일반 멤버</option>
+                                            @if($participant->role === 'owner')
+                                                <option value="admin">관리자</option>
+                                            @endif
+                                        </select>
+                                        @error('editRole')
+                                            <div class="text-danger small">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+                                @endif
+
+                                <div class="d-flex justify-content-end gap-2">
+                                    <button type="button" class="btn btn-secondary" wire:click="closeEditModal">취소</button>
+                                    <button type="submit" class="btn btn-primary">저장</button>
+                                </div>
+                            </form>
+                        @endif
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    <!-- 참여자 제거 확인 모달 -->
+    @if($showRemoveModal)
+        <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-sm">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-user-times text-danger"></i> 멤버 제거
+                        </h5>
+                        <button type="button" class="btn-close" wire:click="closeRemoveModal"></button>
+                    </div>
+                    <div class="modal-body">
+                        @if($removingParticipant)
+                            <div class="text-center mb-3">
+                                <div class="d-flex align-items-center justify-content-center mb-2">
+                                    @if ($removingParticipant->avatar)
+                                        <img src="{{ $removingParticipant->avatar }}" alt="{{ $removingParticipant->name }}"
+                                             class="rounded-circle me-2" style="width: 32px; height: 32px; object-fit: cover;">
+                                    @else
+                                        <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold me-2"
+                                             style="width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                            {{ mb_substr($removingParticipant->name, 0, 1) }}
+                                        </div>
+                                    @endif
+                                    <strong>{{ $removingParticipant->name }}</strong>
+                                </div>
+                            </div>
+                            <p class="text-center">정말로 이 멤버를 채팅방에서 제거하시겠습니까?</p>
+                            <p class="text-muted small text-center">제거된 멤버는 다시 초대해야 채팅방에 참여할 수 있습니다.</p>
+                        @endif
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" wire:click="closeRemoveModal">취소</button>
+                        <button type="button" class="btn btn-danger" wire:click="removeParticipant">제거</button>
                     </div>
                 </div>
             </div>

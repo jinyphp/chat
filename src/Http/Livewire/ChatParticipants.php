@@ -7,6 +7,7 @@ use Livewire\Attributes\On;
 use Jiny\Chat\Models\ChatRoom;
 use Jiny\Chat\Models\ChatParticipant;
 use Jiny\Chat\Services\ChatService;
+use Jiny\Chat\Models\ChatInviteToken;
 use Jiny\Site\Models\SiteLanguage;
 use Jiny\Auth\Facades\Shard;
 
@@ -24,6 +25,8 @@ class ChatParticipants extends Component
     public $showInviteModal = false;
     public $showSettingsModal = false;
     public $showLanguageModal = false;
+    public $showEditModal = false;
+    public $showRemoveModal = false;
 
     // 폼 데이터
     public $memberEmail = '';
@@ -34,6 +37,12 @@ class ChatParticipants extends Component
     // 언어 관련
     public $availableLanguages = [];
     public $editingParticipant = null;
+    public $removingParticipant = null;
+
+    // 편집 폼 데이터
+    public $editName = '';
+    public $editLanguage = 'ko';
+    public $editRole = 'member';
 
     // 이메일 검증 관련
     public $emailValidation = null; // null, 'checking', 'valid', 'invalid', 'exists'
@@ -94,16 +103,31 @@ class ChatParticipants extends Component
         // JWT 인증 확인
         $this->user = \JwtAuth::user(request());
         if (!$this->user) {
-            // 임시 테스트 사용자
-            $this->user = (object) [
-                'uuid' => 'test-user-001',
-                'name' => 'Test User',
-                'email' => 'test@example.com'
-            ];
+            throw new \Exception('인증된 사용자를 찾을 수 없습니다.');
         }
 
         // 현재 사용자의 참여자 정보 찾기
         $this->participant = $this->participants->firstWhere('user_uuid', $this->user->uuid);
+
+        // 디버깅을 위한 로그
+        \Log::info('Current authenticated user', [
+            'uuid' => $this->user->uuid,
+            'email' => $this->user->email,
+            'name' => $this->user->name
+        ]);
+
+        if ($this->participant) {
+            \Log::info('Found participant for current user', [
+                'participant_id' => $this->participant->id,
+                'role' => $this->participant->role,
+                'user_uuid' => $this->participant->user_uuid
+            ]);
+        } else {
+            \Log::warning('No participant found for current user', [
+                'user_uuid' => $this->user->uuid,
+                'participants_count' => $this->participants->count()
+            ]);
+        }
     }
 
     public function loadAvailableLanguages()
@@ -288,11 +312,50 @@ class ChatParticipants extends Component
 
     public function generateInviteLink()
     {
-        $token = \Str::random(32);
-        $this->inviteLink = route('home.chat.join', ['token' => $token]);
-        $this->showInviteModal = true;
+        try {
+            // 기존 활성 토큰이 있는지 확인
+            $existingTokens = ChatInviteToken::getActiveTokensForRoom($this->roomId);
 
-        // 토큰을 데이터베이스에 저장하는 로직 추가 필요
+            if ($existingTokens->isNotEmpty()) {
+                // 기존 토큰 사용
+                $inviteToken = $existingTokens->first();
+            } else {
+                // 새 토큰 생성
+                $inviteToken = ChatInviteToken::createInviteToken(
+                    $this->roomId,
+                    $this->room->uuid,
+                    $this->user->uuid,
+                    [
+                        'expires_in_hours' => 24, // 24시간 후 만료
+                        'max_uses' => null, // 무제한 사용
+                        'metadata' => [
+                            'created_from' => 'chat_participants_component',
+                            'creator_name' => $this->participant->name ?? $this->user->name
+                        ]
+                    ]
+                );
+            }
+
+            // 초대 링크 생성
+            $this->inviteLink = route('chat.join', ['token' => $inviteToken->token]);
+            $this->showInviteModal = true;
+
+            \Log::info('초대 링크 생성됨', [
+                'room_id' => $this->roomId,
+                'token' => $inviteToken->token,
+                'expires_at' => $inviteToken->expires_at,
+                'created_by' => $this->user->uuid
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('초대 링크 생성 실패', [
+                'room_id' => $this->roomId,
+                'user_uuid' => $this->user->uuid,
+                'error' => $e->getMessage()
+            ]);
+
+            session()->flash('error', '초대 링크 생성 중 오류가 발생했습니다.');
+        }
     }
 
     public function showSettings()
@@ -399,6 +462,166 @@ class ChatParticipants extends Component
         $this->showLanguageModal = false;
         $this->editingParticipant = null;
         $this->memberLanguage = 'ko';
+    }
+
+    /**
+     * 참여자 정보 수정 (방장/관리자용)
+     */
+    public function editParticipant($participantId)
+    {
+        $participant = $this->participants->firstWhere('id', $participantId);
+        if ($participant) {
+            $this->editingParticipant = $participant;
+            $this->editName = $participant->name;
+            $this->editLanguage = $participant->language ?? 'ko';
+            $this->editRole = $participant->role;
+            $this->showEditModal = true;
+        }
+    }
+
+    /**
+     * 자신의 프로필 수정
+     */
+    public function editOwnProfile()
+    {
+        $participant = $this->participants->firstWhere('user_uuid', $this->user->uuid);
+        if ($participant) {
+            $this->editingParticipant = $participant;
+            $this->editName = $participant->name;
+            $this->editLanguage = $participant->language ?? 'ko';
+            $this->editRole = $participant->role;
+            $this->showEditModal = true;
+        }
+    }
+
+    /**
+     * 참여자 정보 업데이트
+     */
+    public function updateParticipantInfo()
+    {
+        $this->validate([
+            'editName' => 'required|string|max:255',
+            'editLanguage' => 'required|string|max:10',
+            'editRole' => 'required|in:member,admin'
+        ]);
+
+        try {
+            if ($this->editingParticipant) {
+                $updateData = [
+                    'name' => $this->editName,
+                    'language' => $this->editLanguage,
+                ];
+
+                // 역할 변경은 방장/관리자만 가능하고, 자신이 아닌 경우에만
+                if ($this->participant &&
+                    in_array($this->participant->role, ['owner', 'admin']) &&
+                    $this->editingParticipant->user_uuid !== $this->user->uuid) {
+                    $updateData['role'] = $this->editRole;
+                }
+
+                $participantId = $this->editingParticipant->id;
+
+                ChatParticipant::where('id', $participantId)
+                    ->update($updateData);
+
+                $this->loadParticipants();
+                $this->showEditModal = false;
+                $this->editingParticipant = null;
+
+                // 참여자 목록 업데이트 이벤트 발송
+                $this->dispatch('participantUpdated', [
+                    'participant_id' => $participantId,
+                    'room_id' => $this->roomId
+                ]);
+
+                session()->flash('success', '정보가 성공적으로 업데이트되었습니다.');
+            }
+        } catch (\Exception $e) {
+            \Log::error('참여자 정보 업데이트 실패', [
+                'error' => $e->getMessage(),
+                'participant_id' => $this->editingParticipant->id ?? 'unknown'
+            ]);
+            session()->flash('error', '정보 업데이트 중 오류가 발생했습니다.');
+        }
+    }
+
+    /**
+     * 참여자 제거 확인 모달 표시
+     */
+    public function confirmRemoveParticipant($participantId)
+    {
+        $participant = $this->participants->firstWhere('id', $participantId);
+        if ($participant && $participant->role !== 'owner') {
+            $this->removingParticipant = $participant;
+            $this->showRemoveModal = true;
+        }
+    }
+
+    /**
+     * 참여자 제거 실행
+     */
+    public function removeParticipant()
+    {
+        try {
+            if ($this->removingParticipant && $this->removingParticipant->role !== 'owner') {
+                $userUuid = $this->removingParticipant->user_uuid;
+                $userName = $this->removingParticipant->name;
+                $participantId = $this->removingParticipant->id;
+
+                // 참여자 상태를 'removed'로 변경하고 left_at 설정
+                ChatParticipant::where('id', $participantId)
+                    ->update([
+                        'status' => 'removed',
+                        'left_at' => now(),
+                        'removed_by_uuid' => $this->user->uuid,
+                        'remove_reason' => 'kicked_by_admin'
+                    ]);
+
+                // 참여자 목록 새로고침
+                $this->loadParticipants();
+
+                // 제거 이벤트 발송
+                $this->dispatch('participantRemoved', [
+                    'user_uuid' => $userUuid,
+                    'user_name' => $userName,
+                    'room_id' => $this->roomId,
+                    'removed_by' => $this->user->uuid
+                ]);
+
+                $this->showRemoveModal = false;
+                $this->removingParticipant = null;
+
+                session()->flash('success', '멤버가 채팅방에서 제거되었습니다.');
+            }
+        } catch (\Exception $e) {
+            \Log::error('참여자 제거 실패', [
+                'error' => $e->getMessage(),
+                'participant_id' => $this->removingParticipant->id ?? 'unknown',
+                'removed_by' => $this->user->uuid ?? 'unknown'
+            ]);
+            session()->flash('error', '멤버 제거 중 오류가 발생했습니다.');
+        }
+    }
+
+    /**
+     * 편집 모달 닫기
+     */
+    public function closeEditModal()
+    {
+        $this->showEditModal = false;
+        $this->editingParticipant = null;
+        $this->editName = '';
+        $this->editLanguage = 'ko';
+        $this->editRole = 'member';
+    }
+
+    /**
+     * 제거 확인 모달 닫기
+     */
+    public function closeRemoveModal()
+    {
+        $this->showRemoveModal = false;
+        $this->removingParticipant = null;
     }
 
     public function render()
