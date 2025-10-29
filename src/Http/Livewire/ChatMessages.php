@@ -10,6 +10,8 @@ use Jiny\Chat\Models\ChatParticipant;
 use Jiny\Chat\Models\ChatFile;
 use Jiny\Chat\Models\ChatMessageFavourite;
 use Jiny\Chat\Services\ChatService;
+use Jiny\Chat\Services\TranslationService;
+use Jiny\Chat\Models\ChatMessageTranslation;
 use Livewire\WithFileUploads;
 use Illuminate\Support\Facades\Storage;
 
@@ -38,6 +40,11 @@ class ChatMessages extends Component
     // 즐겨찾기 관련
     public $favouriteMessages = [];
 
+    // 번역 관련
+    public $translatedMessages = [];
+    public $showTranslations = true;
+    public $currentUserLanguage = 'ko';
+
     // 페이지네이션
     public $currentPage = 1;
     public $perPage = 50;
@@ -45,10 +52,12 @@ class ChatMessages extends Component
     public $loadingMore = false;
 
     protected $chatService;
+    protected $translationService;
 
-    public function boot(ChatService $chatService)
+    public function boot(ChatService $chatService, TranslationService $translationService)
     {
         $this->chatService = $chatService;
+        $this->translationService = $translationService;
     }
 
     public function mount($roomId)
@@ -56,6 +65,7 @@ class ChatMessages extends Component
         $this->roomId = $roomId;
         $this->loadRoom();
         $this->loadUser();
+        $this->loadUserLanguage();
         $this->loadInitialMessages();
         $this->loadFavouriteMessages();
     }
@@ -99,6 +109,15 @@ class ChatMessages extends Component
     {
         $this->loadMessages();
         $this->messagesLoaded = true;
+
+        // 기존 번역 로드
+        $this->loadExistingTranslations();
+
+        // 자동 번역 실행 (기존 번역이 없는 메시지만)
+        if ($this->showTranslations) {
+            $this->translateAllMessages();
+        }
+
         $this->dispatch('scroll-to-bottom');
     }
 
@@ -347,7 +366,13 @@ class ChatMessages extends Component
         if ($newMessages->count() > 0) {
             foreach ($newMessages as $message) {
                 if ($message->sender_uuid !== $this->user->uuid) {
-                    $this->messages[] = $this->formatMessage($message);
+                    $formattedMessage = $this->formatMessage($message);
+                    $this->messages[] = $formattedMessage;
+
+                    // 새 메시지 자동 번역
+                    if ($this->showTranslations) {
+                        $this->translateMessage($formattedMessage['id']);
+                    }
                 }
             }
             $this->dispatch('scroll-to-bottom');
@@ -730,6 +755,238 @@ class ChatMessages extends Component
             ]);
             session()->flash('error', '메시지 삭제에 실패했습니다.');
         }
+    }
+
+    /**
+     * 사용자 언어 설정 로드
+     */
+    public function loadUserLanguage()
+    {
+        if ($this->user) {
+            // 참여자 정보에서 언어 설정 가져오기
+            $participant = ChatParticipant::where('room_id', $this->roomId)
+                ->where('user_uuid', $this->user->uuid)
+                ->where('status', 'active')
+                ->first();
+
+            $this->currentUserLanguage = $participant->language ?? 'ko';
+        }
+    }
+
+    /**
+     * 기존 번역 로드
+     */
+    public function loadExistingTranslations()
+    {
+        try {
+            if (empty($this->messages) || !$this->currentUserLanguage) {
+                return;
+            }
+
+            // 현재 로드된 메시지 ID 수집
+            $messageIds = collect($this->messages)
+                ->where('sender_uuid', '!=', $this->user->uuid) // 자신의 메시지 제외
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($messageIds)) {
+                return;
+            }
+
+            // 데이터베이스에서 기존 번역 조회
+            $existingTranslations = ChatMessageTranslation::getTranslationsForMessages(
+                $messageIds,
+                $this->currentUserLanguage
+            );
+
+            // 번역 결과를 translatedMessages 배열에 저장
+            foreach ($existingTranslations as $messageId => $translation) {
+                $this->translatedMessages[$messageId] = $translation->toTranslationArray();
+            }
+
+            \Log::info('기존 번역 로드 완료', [
+                'room_id' => $this->roomId,
+                'target_language' => $this->currentUserLanguage,
+                'total_messages' => count($messageIds),
+                'existing_translations' => $existingTranslations->count()
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('기존 번역 로드 실패', [
+                'room_id' => $this->roomId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 메시지 번역 (데이터베이스 기반)
+     */
+    public function translateMessage($messageId)
+    {
+        try {
+            $message = collect($this->messages)->firstWhere('id', $messageId);
+
+            if (!$message) {
+                return;
+            }
+
+            // 이미 번역된 메시지인지 확인
+            if (isset($this->translatedMessages[$messageId])) {
+                return;
+            }
+
+            // 메시지 발신자의 언어 확인
+            $sender = ChatParticipant::where('room_id', $this->roomId)
+                ->where('user_uuid', $message['sender_uuid'])
+                ->first();
+
+            $senderLanguage = $sender->language ?? 'auto';
+
+            // 번역이 필요한지 확인
+            if (!$this->translationService->needsTranslation($senderLanguage, $this->currentUserLanguage)) {
+                return;
+            }
+
+            // 데이터베이스 기반 번역 실행
+            $translationResult = $this->translationService->translateChatMessage(
+                $messageId,
+                $message['content'],
+                $this->currentUserLanguage,
+                $senderLanguage
+            );
+
+            // 번역 결과 저장
+            $this->translatedMessages[$messageId] = $translationResult;
+
+            \Log::info('메시지 번역 완료', [
+                'message_id' => $messageId,
+                'original' => $message['content'],
+                'translated' => $translationResult['translated'],
+                'from' => $senderLanguage,
+                'to' => $this->currentUserLanguage,
+                'from_database' => isset($translationResult['translation_id'])
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('메시지 번역 실패', [
+                'message_id' => $messageId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 모든 메시지 자동 번역 (배치 처리로 최적화)
+     */
+    public function translateAllMessages()
+    {
+        try {
+            // 번역이 필요한 메시지 필터링 (자신의 메시지 제외)
+            $messagesToTranslate = [];
+            foreach ($this->messages as $message) {
+                if ($message['sender_uuid'] === $this->user->uuid) {
+                    continue;
+                }
+
+                // 이미 번역된 메시지 제외
+                if (isset($this->translatedMessages[$message['id']])) {
+                    continue;
+                }
+
+                // 발신자 언어 정보 추가
+                $sender = ChatParticipant::where('room_id', $this->roomId)
+                    ->where('user_uuid', $message['sender_uuid'])
+                    ->first();
+
+                $messagesToTranslate[] = [
+                    'id' => $message['id'],
+                    'content' => $message['content'],
+                    'sender_language' => $sender->language ?? 'auto'
+                ];
+            }
+
+            if (empty($messagesToTranslate)) {
+                return;
+            }
+
+            // 배치 번역 실행
+            $translationResults = $this->translationService->translateMultipleMessages(
+                $messagesToTranslate,
+                $this->currentUserLanguage
+            );
+
+            // 결과 저장
+            $this->translatedMessages = array_merge($this->translatedMessages, $translationResults);
+
+            \Log::info('배치 번역 완료', [
+                'room_id' => $this->roomId,
+                'target_language' => $this->currentUserLanguage,
+                'total_messages' => count($messagesToTranslate),
+                'successful_translations' => count($translationResults)
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('배치 번역 실패', [
+                'room_id' => $this->roomId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 번역 표시 토글
+     */
+    public function toggleTranslations()
+    {
+        $this->showTranslations = !$this->showTranslations;
+
+        if ($this->showTranslations) {
+            $this->translateAllMessages();
+        }
+    }
+
+    /**
+     * 특정 메시지의 번역 토글
+     */
+    public function toggleMessageTranslation($messageId)
+    {
+        if (isset($this->translatedMessages[$messageId])) {
+            // 번역 숨기기
+            unset($this->translatedMessages[$messageId]);
+        } else {
+            // 번역 표시
+            $this->translateMessage($messageId);
+        }
+    }
+
+    /**
+     * 번역 언어 변경
+     */
+    public function changeTranslationLanguage($language)
+    {
+        $this->currentUserLanguage = $language;
+        $this->translatedMessages = []; // 기존 번역 초기화
+
+        if ($this->showTranslations) {
+            $this->translateAllMessages();
+        }
+    }
+
+    /**
+     * 번역된 메시지 가져오기
+     */
+    public function getTranslatedMessage($messageId)
+    {
+        return $this->translatedMessages[$messageId] ?? null;
+    }
+
+    /**
+     * 메시지가 번역되었는지 확인
+     */
+    public function isMessageTranslated($messageId)
+    {
+        return isset($this->translatedMessages[$messageId]);
     }
 
     public function render()

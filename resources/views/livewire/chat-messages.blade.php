@@ -20,6 +20,11 @@
                     <i class="fas fa-cog"></i>
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
+                    <li><a class="dropdown-item" href="#" wire:click="toggleTranslations">
+                        <i class="fas fa-language me-2"></i>
+                        {{ $showTranslations ? '번역 숨기기' : '번역 표시' }}
+                    </a></li>
+                    <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item" href="#" wire:click="showBackgroundSettings">
                         <i class="fas fa-palette me-2"></i> 배경색 변경
                     </a></li>
@@ -141,7 +146,56 @@
                                             </div>
                                         @endif
                                         @if($message['type'] === 'text')
-                                            {{ $message['content'] }}
+                                            <!-- 원본 메시지 -->
+                                            <div class="message-original">
+                                                {{ $message['content'] }}
+                                            </div>
+
+                                            <!-- 번역된 메시지 (다른 사람 메시지만) -->
+                                            @if(!$message['is_mine'] && $showTranslations && isset($translatedMessages[$message['id']]))
+                                                @php
+                                                    $translation = $translatedMessages[$message['id']];
+                                                    $isNewTranslation = !isset($translation['translated_at']) ||
+                                                                      (isset($translation['translated_at']) &&
+                                                                       \Carbon\Carbon::parse($translation['translated_at'])->diffInMinutes(now()) < 5);
+                                                    $translationBgColor = $isNewTranslation ? '#e8f5e8' : '#f0f8ff'; // 연한 초록 vs 연한 파랑
+                                                    $translationBorderColor = $isNewTranslation ? '#28a745' : '#007bff';
+                                                @endphp
+                                                @if($translation['success'] && $translation['needs_translation'])
+                                                    <div class="message-translation mt-2 pt-2 border-top"
+                                                         style="background-color: {{ $translationBgColor }};
+                                                                border-top-color: {{ $translationBorderColor }} !important;
+                                                                border-radius: 4px;
+                                                                padding: 8px;">
+                                                        <div class="d-flex align-items-center mb-1">
+                                                            <i class="fas fa-language me-1"
+                                                               style="font-size: 0.7rem; color: {{ $translationBorderColor }};"></i>
+                                                            <small class="fw-medium"
+                                                                   style="font-size: 0.7rem; color: {{ $translationBorderColor }};">
+                                                                번역 ({{ strtoupper($translation['source_language']) }} → {{ strtoupper($translation['target_language']) }})
+                                                            </small>
+                                                            @if($isNewTranslation)
+                                                                <span class="badge bg-success ms-1" style="font-size: 0.6rem;">NEW</span>
+                                                            @else
+                                                                <span class="badge bg-secondary ms-1" style="font-size: 0.6rem;">CACHED</span>
+                                                            @endif
+                                                        </div>
+                                                        <div class="text-dark">
+                                                            {{ $translation['translated'] }}
+                                                        </div>
+                                                        @if(config('app.debug'))
+                                                            <div class="mt-1">
+                                                                <small class="text-muted" style="font-size: 0.6rem;">
+                                                                    @if(isset($translation['translated_at']))
+                                                                        번역 시간: {{ \Carbon\Carbon::parse($translation['translated_at'])->format('H:i:s') }}
+                                                                    @endif
+                                                                    | 제공자: {{ $translation['provider'] ?? 'google' }}
+                                                                </small>
+                                                            </div>
+                                                        @endif
+                                                    </div>
+                                                @endif
+                                            @endif
                                         @elseif(isset($message['file']))
                                             @include('jiny-chat::livewire.partials.file-message', ['file' => $message['file']])
                                         @endif
@@ -163,6 +217,15 @@
                                         <li><a class="dropdown-item" href="#" wire:click="forwardMessage({{ $message['id'] }})">
                                             <i class="fas fa-share me-2"></i> Forward
                                         </a></li>
+                                        @if(!$message['is_mine'])
+                                            <li><a class="dropdown-item" href="#" wire:click="toggleMessageTranslation({{ $message['id'] }})">
+                                                @if(isset($translatedMessages[$message['id']]))
+                                                    <i class="fas fa-language me-2 text-info"></i> 번역 숨기기
+                                                @else
+                                                    <i class="fas fa-language me-2"></i> 번역 보기
+                                                @endif
+                                            </a></li>
+                                        @endif
                                         <li><a class="dropdown-item" href="#" wire:click="toggleFavourite({{ $message['id'] }})">
                                             @if(in_array($message['id'], $favouriteMessages))
                                                 <i class="fas fa-star me-2 text-warning"></i> 즐겨찾기 해제
