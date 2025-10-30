@@ -210,6 +210,16 @@ Route::get('/chat/docs', function () {
     return view('jiny-chat::www.api', compact('technologies'));
 })->name('chat.docs');
 
+// SSE (Server-Sent Events) 라우트
+Route::get('/chat/sse/{roomId}', [\Jiny\Chat\Http\Controllers\ChatSseController::class, 'stream'])
+    ->name('chat.sse.stream');
+
+Route::post('/chat/sse/{roomId}/typing', [\Jiny\Chat\Http\Controllers\ChatSseController::class, 'updateTyping'])
+    ->name('chat.sse.typing');
+
+Route::get('/chat/sse/{roomId}/status', [\Jiny\Chat\Http\Controllers\ChatSseController::class, 'status'])
+    ->name('chat.sse.status');
+
 // 초대 링크 관련 라우트
 Route::get('/chat/join/{token}', [\Jiny\Chat\Http\Controllers\ChatInviteController::class, 'join'])
     ->name('chat.join');

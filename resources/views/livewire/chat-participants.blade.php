@@ -369,7 +369,7 @@
     <!-- 방 설정 모달 -->
     @if($showSettingsModal)
         <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
-            <div class="modal-dialog">
+            <div class="modal-dialog modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title">
@@ -378,17 +378,187 @@
                         <button type="button" class="btn-close" wire:click="closeSettings"></button>
                     </div>
                     <div class="modal-body">
-                        <form wire:submit.prevent="updateBackgroundColor">
-                            <div class="mb-3">
-                                <label class="form-label">배경색</label>
-                                <div class="d-flex gap-2 align-items-center">
-                                    <input type="color" class="form-control form-control-color" wire:model="backgroundColor">
-                                    <input type="text" class="form-control" wire:model="backgroundColor" placeholder="#ffffff">
+                        <!-- 탭 네비게이션 -->
+                        <ul class="nav nav-tabs mb-3" id="settingsTab" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="basic-tab" data-bs-toggle="tab" data-bs-target="#basic" type="button" role="tab">
+                                    <i class="fas fa-info-circle me-1"></i> 기본정보
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="access-tab" data-bs-toggle="tab" data-bs-target="#access" type="button" role="tab">
+                                    <i class="fas fa-shield-alt me-1"></i> 접근설정
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="appearance-tab" data-bs-toggle="tab" data-bs-target="#appearance" type="button" role="tab">
+                                    <i class="fas fa-palette me-1"></i> 외관설정
+                                </button>
+                            </li>
+                        </ul>
+
+                        <form wire:submit.prevent="updateRoomSettings">
+                            <!-- 탭 콘텐츠 -->
+                            <div class="tab-content" id="settingsTabContent">
+                                <!-- 기본정보 탭 -->
+                                <div class="tab-pane fade show active" id="basic" role="tabpanel">
+                                    {{-- 채팅방 제목 --}}
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">
+                                            채팅방 제목 <span class="text-danger">*</span>
+                                        </label>
+                                        <input type="text" class="form-control" wire:model="settingsTitle"
+                                               placeholder="채팅방 제목을 입력하세요" required maxlength="255">
+                                        @error('settingsTitle')
+                                            <div class="text-danger small">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+
+                                    {{-- 설명 --}}
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">설명</label>
+                                        <textarea class="form-control" wire:model="settingsDescription" rows="3"
+                                                  placeholder="채팅방에 대한 설명을 입력하세요" maxlength="1000"></textarea>
+                                        @error('settingsDescription')
+                                            <div class="text-danger small">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+
+                                    {{-- 채팅방 타입 --}}
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">채팅방 타입</label>
+                                        <select class="form-select" wire:model="settingsType">
+                                            <option value="public">
+                                                <i class="fas fa-globe"></i> 공개 - 누구나 검색하고 참여할 수 있습니다
+                                            </option>
+                                            <option value="private">
+                                                <i class="fas fa-lock"></i> 비공개 - 초대를 통해서만 참여할 수 있습니다
+                                            </option>
+                                            <option value="group">
+                                                <i class="fas fa-users"></i> 그룹 - 소규모 그룹을 위한 채팅방입니다
+                                            </option>
+                                        </select>
+                                        @error('settingsType')
+                                            <div class="text-danger small">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+
+                                    {{-- 최대 참여자 수 --}}
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">최대 참여자 수</label>
+                                        <input type="number" class="form-control" wire:model="settingsMaxParticipants"
+                                               min="0" max="1000" placeholder="0 (무제한)">
+                                        <div class="form-text small">0 또는 비워두면 무제한, 2-1000명 범위에서 제한 가능</div>
+                                        @error('settingsMaxParticipants')
+                                            <div class="text-danger small">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+                                </div>
+
+                                <!-- 접근설정 탭 -->
+                                <div class="tab-pane fade" id="access" role="tabpanel">
+                                    {{-- 접근 권한 --}}
+                                    <div class="mb-4">
+                                        <div class="form-check mb-3">
+                                            <input id="settings_is_public" type="checkbox" value="1"
+                                                   wire:model="settingsIsPublic" class="form-check-input">
+                                            <label for="settings_is_public" class="form-check-label">
+                                                <div class="fw-semibold">
+                                                    <i class="fas fa-search text-primary me-1"></i> 검색 가능
+                                                </div>
+                                                <div class="text-muted small">다른 사용자가 채팅방을 검색할 수 있습니다</div>
+                                            </label>
+                                        </div>
+
+                                        <div class="form-check mb-3">
+                                            <input id="settings_allow_join" type="checkbox" value="1"
+                                                   wire:model="settingsAllowJoin" class="form-check-input">
+                                            <label for="settings_allow_join" class="form-check-label">
+                                                <div class="fw-semibold">
+                                                    <i class="fas fa-door-open text-success me-1"></i> 자유 참여 허용
+                                                </div>
+                                                <div class="text-muted small">승인 없이 자유롭게 참여할 수 있습니다</div>
+                                            </label>
+                                        </div>
+
+                                        <div class="form-check mb-3">
+                                            <input id="settings_allow_invite" type="checkbox" value="1"
+                                                   wire:model="settingsAllowInvite" class="form-check-input">
+                                            <label for="settings_allow_invite" class="form-check-label">
+                                                <div class="fw-semibold">
+                                                    <i class="fas fa-user-plus text-info me-1"></i> 초대 허용
+                                                </div>
+                                                <div class="text-muted small">참여자가 다른 사용자를 초대할 수 있습니다</div>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    {{-- 비밀번호 --}}
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">
+                                            <i class="fas fa-key text-warning me-1"></i> 비밀번호 (선택사항)
+                                        </label>
+                                        <input type="password" class="form-control"
+                                               wire:model="settingsPassword" placeholder="참여 시 필요한 비밀번호"
+                                               minlength="4">
+                                        <div class="form-text small">비밀번호를 설정하면 참여 시 비밀번호 입력이 필요합니다</div>
+                                        @error('settingsPassword')
+                                            <div class="text-danger small">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+                                </div>
+
+                                <!-- 외관설정 탭 -->
+                                <div class="tab-pane fade" id="appearance" role="tabpanel">
+                                    {{-- 배경색 --}}
+                                    <div class="mb-4">
+                                        <label class="form-label fw-semibold">배경색</label>
+                                        <div class="row g-3">
+                                            <div class="col-md-4">
+                                                <label class="form-label small">색상 선택</label>
+                                                <input type="color" class="form-control form-control-color w-100"
+                                                       wire:model="backgroundColor" style="height: 50px;">
+                                            </div>
+                                            <div class="col-md-8">
+                                                <label class="form-label small">색상 코드</label>
+                                                <input type="text" class="form-control" wire:model="backgroundColor"
+                                                       placeholder="#f8f9fa" pattern="^#[a-fA-F0-9]{6}$">
+                                                <div class="form-text small">16진수 색상 코드를 입력하세요 (예: #f8f9fa)</div>
+                                            </div>
+                                        </div>
+                                        @error('backgroundColor')
+                                            <div class="text-danger small">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+
+                                    {{-- 미리보기 --}}
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">미리보기</label>
+                                        <div class="border rounded p-3" style="background-color: {{ $backgroundColor }};">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center me-2"
+                                                     style="width: 32px; height: 32px;">
+                                                    <i class="fas fa-user text-white"></i>
+                                                </div>
+                                                <div>
+                                                    <div class="fw-semibold small">사용자 이름</div>
+                                                    <div class="text-muted" style="font-size: 11px;">2분 전</div>
+                                                </div>
+                                            </div>
+                                            <div class="bg-white rounded p-2 shadow-sm">
+                                                <small>이것은 채팅 메시지 미리보기입니다.</small>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="d-flex justify-content-end gap-2">
+
+                            <!-- 버튼 영역 -->
+                            <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top">
                                 <button type="button" class="btn btn-secondary" wire:click="closeSettings">취소</button>
-                                <button type="submit" class="btn btn-primary">저장</button>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-1"></i> 저장
+                                </button>
                             </div>
                         </form>
                     </div>

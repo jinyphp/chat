@@ -39,7 +39,6 @@
     <!-- Card Body - 메시지 목록 -->
     <div class="card-body p-0 overflow-auto flex-grow-1"
          style="background-color: {{ $backgroundColor ?? '#ffffff' }}; scroll-behavior: smooth;"
-         wire:poll.3s="pollForNewMessages"
          id="messages-container">
         <div class="p-3">
             @if(!empty($messages))
@@ -438,6 +437,17 @@
 
     <!-- JavaScript and CSS -->
     <script>
+        // SSE 관련 변수
+        let eventSource = null;
+        let reconnectTimeout = null;
+        let isConnected = false;
+        let connectionAttempts = 0;
+        const maxReconnectAttempts = 5;
+
+        // Livewire 컴포넌트 데이터 접근
+        const roomId = @json($roomId);
+        const lastMessageId = @json($this->getLastMessageId());
+
         // 스크롤을 하단으로 이동하는 함수
         function scrollToBottom(smooth = false) {
             const messagesContainer = document.getElementById('messages-container') || document.querySelector('.overflow-auto');
@@ -452,6 +462,178 @@
                 }
             }
         }
+
+        // SSE 연결 초기화
+        function initSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            const sseUrl = `/chat/sse/${roomId}?last_message_id=${lastMessageId}`;
+            console.log('SSE 연결 시도:', sseUrl);
+
+            eventSource = new EventSource(sseUrl);
+
+            eventSource.onopen = function(event) {
+                console.log('SSE 연결 성공');
+                isConnected = true;
+                connectionAttempts = 0;
+                showConnectionStatus('connected');
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('SSE 기본 메시지 수신:', data);
+
+                    if (data.type === 'connected') {
+                        showToast('실시간 채팅에 연결되었습니다.', 'success');
+                    }
+                } catch (e) {
+                    console.error('SSE 메시지 파싱 오류:', e);
+                }
+            };
+
+            // 새 메시지 이벤트
+            eventSource.addEventListener('new_message', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('새 메시지 수신:', data);
+
+                    if (data.type === 'new_message') {
+                        // Livewire 컴포넌트에 새 메시지 전달
+                        @this.call('handleSseMessage', data.message);
+                    }
+                } catch (e) {
+                    console.error('새 메시지 처리 오류:', e);
+                }
+            });
+
+            // 타이핑 상태 업데이트
+            eventSource.addEventListener('typing_update', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('타이핑 상태 업데이트:', data);
+
+                    if (data.type === 'typing_update') {
+                        @this.call('updateTypingUsers', data.typing_users);
+                    }
+                } catch (e) {
+                    console.error('타이핑 상태 처리 오류:', e);
+                }
+            });
+
+            // Heartbeat 이벤트
+            eventSource.addEventListener('heartbeat', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Heartbeat 수신:', data);
+                    // 연결 상태 UI 업데이트 (선택적)
+                } catch (e) {
+                    console.error('Heartbeat 처리 오류:', e);
+                }
+            });
+
+            // 오류 이벤트
+            eventSource.addEventListener('error', function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.error('SSE 서버 오류:', data);
+                    showToast('채팅 서버에서 오류가 발생했습니다.', 'error');
+                } catch (e) {
+                    console.error('SSE 오류 이벤트 처리 오류:', e);
+                }
+            });
+
+            eventSource.onerror = function(event) {
+                console.error('SSE 연결 오류:', event);
+                isConnected = false;
+                showConnectionStatus('disconnected');
+
+                if (connectionAttempts < maxReconnectAttempts) {
+                    connectionAttempts++;
+                    const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000); // 최대 30초
+                    console.log(`${delay}ms 후 재연결 시도 (${connectionAttempts}/${maxReconnectAttempts})`);
+
+                    reconnectTimeout = setTimeout(() => {
+                        initSSE();
+                    }, delay);
+                } else {
+                    console.error('최대 재연결 시도 횟수에 도달했습니다.');
+                    showToast('채팅 서버 연결에 실패했습니다. 페이지를 새로고침하세요.', 'error');
+                }
+            };
+        }
+
+        // 연결 상태 표시
+        function showConnectionStatus(status) {
+            const indicator = document.getElementById('connection-indicator') || createConnectionIndicator();
+
+            if (status === 'connected') {
+                indicator.className = 'position-fixed top-0 end-0 m-3 badge bg-success';
+                indicator.innerHTML = '<i class="fas fa-circle me-1"></i>연결됨';
+            } else {
+                indicator.className = 'position-fixed top-0 end-0 m-3 badge bg-danger';
+                indicator.innerHTML = '<i class="fas fa-circle me-1"></i>연결 끊김';
+            }
+
+            // 3초 후 숨기기 (연결됨 상태만)
+            if (status === 'connected') {
+                setTimeout(() => {
+                    indicator.style.opacity = '0';
+                    setTimeout(() => {
+                        if (indicator.parentNode) {
+                            indicator.parentNode.removeChild(indicator);
+                        }
+                    }, 300);
+                }, 3000);
+            }
+        }
+
+        function createConnectionIndicator() {
+            const indicator = document.createElement('div');
+            indicator.id = 'connection-indicator';
+            indicator.style.zIndex = '9999';
+            indicator.style.transition = 'opacity 0.3s ease';
+            document.body.appendChild(indicator);
+            return indicator;
+        }
+
+        // 타이핑 상태 전송
+        function sendTypingStatus(isTyping) {
+            fetch(`/chat/sse/${roomId}/typing`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+                },
+                body: JSON.stringify({ is_typing: isTyping })
+            }).catch(error => {
+                console.error('타이핑 상태 전송 오류:', error);
+            });
+        }
+
+        // 페이지 언로드 시 SSE 연결 정리
+        window.addEventListener('beforeunload', function() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            if (reconnectTimeout) {
+                clearTimeout(reconnectTimeout);
+            }
+        });
+
+        // 페이지 가시성 변경 시 연결 관리
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible' && !isConnected) {
+                console.log('페이지가 활성화되어 SSE 재연결 시도');
+                initSSE();
+            } else if (document.visibilityState === 'hidden' && eventSource) {
+                console.log('페이지가 비활성화되어 SSE 연결 종료');
+                eventSource.close();
+                isConnected = false;
+            }
+        });
 
         // 사용자가 스크롤 하단 근처에 있는지 확인
         function isNearBottom() {
@@ -474,15 +656,23 @@
             }
         });
 
-        // 컴포넌트 로드 시 스크롤을 맨 아래로
+        // 컴포넌트 로드 시 스크롤을 맨 아래로 및 SSE 연결 시작
         document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => scrollToBottom(), 100);
             setTimeout(() => scrollToBottom(), 500); // 이미지 로드 등을 고려한 추가 시도
+
+            // SSE 연결 시작
+            initSSE();
         });
 
         // Livewire 컴포넌트 초기화 완료 시
         document.addEventListener('livewire:init', function() {
             setTimeout(() => scrollToBottom(), 100);
+        });
+
+        // Livewire 이벤트 리스너 - 타이핑 상태 전송
+        document.addEventListener('send-typing-status', function(event) {
+            sendTypingStatus(event.detail.is_typing);
         });
 
         // Livewire 이벤트 리스너 - 스크롤 하단 이동

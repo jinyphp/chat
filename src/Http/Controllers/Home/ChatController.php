@@ -55,14 +55,23 @@ class ChatController extends Controller
             ];
         }
 
-        // 사용자가 참여한 채팅방 목록
+        // 사용자가 참여한 채팅방 목록 (owner 정보 포함)
         $participatingRooms = ChatRoom::whereHas('participants', function ($query) use ($user) {
             $query->where('user_uuid', $user->uuid)
                   ->where('status', 'active');
         })
-        ->with(['latestMessage', 'activeParticipants'])
+        ->with(['latestMessage', 'activeParticipants', 'participants' => function ($query) use ($user) {
+            $query->where('user_uuid', $user->uuid)->where('status', 'active');
+        }])
         ->orderBy('last_activity_at', 'desc')
         ->paginate(10);
+
+        // 각 채팅방에 대한 사용자 역할 정보 추가
+        foreach ($participatingRooms as $room) {
+            $participant = $room->participants->where('user_uuid', $user->uuid)->first();
+            $room->user_role = $participant ? $participant->role : null;
+            $room->is_owner = $room->owner_uuid === $user->uuid;
+        }
 
         // 읽지 않은 메시지 수 조회
         $unreadCounts = [];
@@ -220,6 +229,37 @@ class ChatController extends Controller
             'messages',
             'user'
         ));
+    }
+
+    /**
+     * 채팅방 편집 페이지
+     */
+    public function edit($id, Request $request)
+    {
+        // JWT 인증 확인
+        $user = \JwtAuth::user($request);
+        if (!$user) {
+            return redirect()->route('login')->with('error', '로그인이 필요합니다.');
+        }
+
+        // 채팅방 조회
+        $room = ChatRoom::find($id);
+        if (!$room) {
+            return redirect()->route('home.chat.index')->with('error', '채팅방을 찾을 수 없습니다.');
+        }
+
+        // 방장 권한 확인
+        if ($room->owner_uuid !== $user->uuid) {
+            return redirect()->route('home.chat.index')->with('error', '방장만 설정을 변경할 수 있습니다.');
+        }
+
+        // UI 설정에서 배경색 추출
+        $backgroundColor = '#f8f9fa'; // 기본값
+        if ($room->ui_settings && isset($room->ui_settings['background_color'])) {
+            $backgroundColor = $room->ui_settings['background_color'];
+        }
+
+        return view('jiny-chat::home.room.edit', compact('room', 'backgroundColor'));
     }
 
     /**
@@ -492,6 +532,298 @@ class ChatController extends Controller
             }
 
             return back()->with('error', $e->getMessage());
+        }
+    }
+
+    /**
+     * 방 설정 페이지 (owner 전용)
+     */
+    public function roomSettings($id, Request $request)
+    {
+        // JWT 인증 확인
+        $user = \JwtAuth::user($request);
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        // 채팅방 조회
+        $room = ChatRoom::find($id);
+        if (!$room) {
+            return response()->json(['error' => 'Room not found'], 404);
+        }
+
+        // 방장 권한 확인
+        if ($room->owner_uuid !== $user->uuid) {
+            return response()->json(['error' => 'Access denied'], 403);
+        }
+
+        // UI 설정에서 배경색 로드
+        $uiSettings = $room->ui_settings ?? [];
+        $backgroundColor = $uiSettings['background_color'] ?? '#f8f9fa';
+
+        // 방 설정 폼 HTML 반환
+        $html = view('jiny-chat::partials.room-settings-form', compact('room', 'backgroundColor'))->render();
+
+        return response($html);
+    }
+
+    /**
+     * 방 설정 업데이트 (owner 전용)
+     */
+    public function updateRoomSettings($id, Request $request)
+    {
+        // JWT 인증 확인
+        $user = \JwtAuth::user($request);
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        // 채팅방 조회
+        $room = ChatRoom::find($id);
+        if (!$room) {
+            return response()->json(['error' => 'Room not found'], 404);
+        }
+
+        // 방장 권한 확인
+        if ($room->owner_uuid !== $user->uuid) {
+            return response()->json(['error' => 'Access denied'], 403);
+        }
+
+        $request->validate([
+            'title' => 'required|string|max:255',
+            'description' => 'nullable|string|max:1000',
+            'type' => 'required|in:public,private,group',
+            'category' => 'nullable|string|max:50',
+            'is_public' => 'boolean',
+            'allow_join' => 'boolean',
+            'allow_invite' => 'boolean',
+            'allow_file_upload' => 'boolean',
+            'allow_voice_message' => 'boolean',
+            'allow_image_upload' => 'boolean',
+            'require_approval' => 'boolean',
+            'auto_moderation' => 'boolean',
+            'show_member_list' => 'boolean',
+            'allow_mentions' => 'boolean',
+            'allow_reactions' => 'boolean',
+            'read_receipts' => 'boolean',
+            'password' => 'nullable|string|min:4|max:255',
+            'max_participants' => 'nullable|integer|min:0|max:1000',
+            'message_retention_days' => 'nullable|integer|min:0|max:365',
+            'max_file_size_mb' => 'nullable|integer|min:1|max:100',
+            'slow_mode_seconds' => 'nullable|integer|min:0|max:3600',
+            'daily_message_limit' => 'nullable|integer|min:0|max:10000',
+            'background_color' => 'required|regex:/^#[a-fA-F0-9]{6}$/',
+            'blocked_words' => 'nullable|string',
+            'room_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
+        ]);
+
+        try {
+            // 기존 UI 설정 가져오기
+            $uiSettings = $room->ui_settings ?? [];
+            $uiSettings['background_color'] = $request->background_color;
+
+            // 금지어 처리
+            $blockedWords = [];
+            if ($request->blocked_words) {
+                $blockedWords = json_decode($request->blocked_words, true) ?: [];
+            }
+
+            $updateData = [
+                'title' => $request->title,
+                'description' => $request->description,
+                'type' => $request->type,
+                'category' => $request->category,
+                'is_public' => $request->boolean('is_public'),
+                'allow_join' => $request->boolean('allow_join'),
+                'allow_invite' => $request->boolean('allow_invite'),
+                'allow_file_upload' => $request->boolean('allow_file_upload', true),
+                'allow_voice_message' => $request->boolean('allow_voice_message', true),
+                'allow_image_upload' => $request->boolean('allow_image_upload', true),
+                'require_approval' => $request->boolean('require_approval'),
+                'auto_moderation' => $request->boolean('auto_moderation'),
+                'show_member_list' => $request->boolean('show_member_list', true),
+                'allow_mentions' => $request->boolean('allow_mentions', true),
+                'allow_reactions' => $request->boolean('allow_reactions', true),
+                'read_receipts' => $request->boolean('read_receipts', true),
+                'max_participants' => $request->max_participants ?: 0,
+                'message_retention_days' => $request->message_retention_days ?: 0,
+                'max_file_size_mb' => $request->max_file_size_mb ?: 10,
+                'slow_mode_seconds' => $request->slow_mode_seconds ?: 0,
+                'daily_message_limit' => $request->daily_message_limit ?: 0,
+                'blocked_words' => $blockedWords,
+                'ui_settings' => $uiSettings,
+                'updated_at' => now(),
+            ];
+
+            // 이미지 업로드 처리
+            if ($request->hasFile('room_image')) {
+                $image = $request->file('room_image');
+
+                // 기존 이미지 삭제
+                if ($room->image && \Storage::disk('public')->exists($room->image)) {
+                    \Storage::disk('public')->delete($room->image);
+                }
+
+                // 새 이미지 저장
+                $imagePath = $image->store('chat/rooms', 'public');
+                $updateData['image'] = $imagePath;
+
+                \Log::info('채팅방 이미지 업로드 완료', [
+                    'room_id' => $room->id,
+                    'image_path' => $imagePath,
+                    'original_name' => $image->getClientOriginalName()
+                ]);
+            }
+
+            // 비밀번호가 입력된 경우에만 업데이트
+            if ($request->filled('password')) {
+                $updateData['password'] = bcrypt($request->password);
+            }
+
+            $room->update($updateData);
+
+            return response()->json([
+                'success' => true,
+                'message' => '방 설정이 성공적으로 변경되었습니다.'
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('방 설정 업데이트 실패', [
+                'room_id' => $id,
+                'error' => $e->getMessage(),
+                'user_uuid' => $user->uuid
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => '설정 저장 중 오류가 발생했습니다.'
+            ], 500);
+        }
+    }
+
+    /**
+     * 초대 링크 관리 페이지
+     */
+    public function invites(Request $request)
+    {
+        // JWT 인증 확인
+        $user = \JwtAuth::user($request);
+        if (!$user) {
+            // 임시 테스트 사용자 생성
+            $user = (object) [
+                'uuid' => 'test-user-' . time(),
+                'name' => '테스트 사용자',
+                'email' => 'test@example.com',
+                'avatar' => null,
+                'shard_id' => 1
+            ];
+        }
+
+        try {
+            // 내가 생성한 채팅방 (초대 링크 발급)
+            $myRooms = ChatRoom::where('owner_uuid', $user->uuid)
+                ->where('status', 'active')
+                ->with('activeParticipants')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            // 최근 참여한 채팅방 (다른 사람 방)
+            $recentJoinedRooms = ChatRoom::whereHas('activeParticipants', function ($query) use ($user) {
+                    $query->where('user_uuid', $user->uuid);
+                })
+                ->where('owner_uuid', '!=', $user->uuid)
+                ->with(['activeParticipants' => function ($query) use ($user) {
+                    $query->where('user_uuid', $user->uuid);
+                }])
+                ->orderBy('last_activity_at', 'desc')
+                ->limit(10)
+                ->get();
+
+            return view('jiny-chat::home.invite.index', [
+                'user' => $user,
+                'myRooms' => $myRooms,
+                'recentJoinedRooms' => $recentJoinedRooms
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('초대 링크 관리 페이지 로드 실패', [
+                'error' => $e->getMessage(),
+                'user_uuid' => $user->uuid ?? null
+            ]);
+
+            return back()->with('error', '페이지를 불러오는 중 오류가 발생했습니다.');
+        }
+    }
+
+    /**
+     * 초대 코드 재발급
+     */
+    public function regenerateInviteCode(Request $request, $id)
+    {
+        // JWT 인증 확인
+        $user = \JwtAuth::user($request);
+        if (!$user) {
+            // 임시 테스트 사용자 생성
+            $user = (object) [
+                'uuid' => 'test-user-' . time(),
+                'name' => '테스트 사용자',
+                'email' => 'test@example.com',
+                'avatar' => null,
+                'shard_id' => 1
+            ];
+        }
+
+        try {
+            // 채팅방 찾기 및 권한 확인
+            $room = ChatRoom::where('id', $id)
+                ->where('owner_uuid', $user->uuid)
+                ->where('status', 'active')
+                ->first();
+
+            if (!$room) {
+                return response()->json([
+                    'success' => false,
+                    'message' => '채팅방을 찾을 수 없거나 권한이 없습니다.'
+                ], 404);
+            }
+
+            // 새로운 초대 코드 생성
+            do {
+                $newInviteCode = \Str::random(12);
+            } while (ChatRoom::where('invite_code', $newInviteCode)->exists());
+
+            // 초대 코드 업데이트
+            $room->update([
+                'invite_code' => $newInviteCode,
+                'updated_at' => now()
+            ]);
+
+            \Log::info('초대 코드 재발급', [
+                'room_id' => $room->id,
+                'room_title' => $room->title,
+                'old_invite_code' => $room->invite_code,
+                'new_invite_code' => $newInviteCode,
+                'user_uuid' => $user->uuid
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => '새로운 초대 링크가 발급되었습니다.',
+                'invite_code' => $newInviteCode,
+                'invite_url' => url('/chat/invite/' . $newInviteCode)
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('초대 코드 재발급 실패', [
+                'room_id' => $id,
+                'error' => $e->getMessage(),
+                'user_uuid' => $user->uuid ?? null
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => '초대 링크 발급 중 오류가 발생했습니다.'
+            ], 500);
         }
     }
 }

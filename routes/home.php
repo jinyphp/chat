@@ -35,6 +35,7 @@ Route::middleware(['web', 'jwt'])->prefix('home/chat')->name('home.chat.')->grou
 
         // 채팅방 입장 및 관리
         Route::get('/{id}', [ChatController::class, 'room'])->name('show');
+        Route::get('/{id}/edit', [ChatController::class, 'edit'])->name('edit');
         Route::post('/{id}/join', [ChatController::class, 'joinRoom'])->name('join');
         Route::post('/{id}/leave', [ChatController::class, 'leaveRoom'])->name('leave');
     });
@@ -42,9 +43,17 @@ Route::middleware(['web', 'jwt'])->prefix('home/chat')->name('home.chat.')->grou
     // 채팅방 별칭 라우트
     Route::get('/room/{id}', [ChatController::class, 'room'])->name('room');
 
+    // 채팅방 설정 (owner 전용)
+    Route::get('/room/{id}/settings', [ChatController::class, 'roomSettings'])->name('room.settings');
+    Route::post('/room/{id}/settings', [ChatController::class, 'updateRoomSettings'])->name('room.settings.update');
+
     // 설정
     Route::get('/settings', [ChatController::class, 'settings'])->name('settings');
     Route::post('/settings', [ChatController::class, 'updateSettings'])->name('settings.update');
+
+    // 초대 링크 관리
+    Route::get('/invites', [ChatController::class, 'invites'])->name('invites');
+    Route::post('/rooms/{id}/regenerate-invite', [ChatController::class, 'regenerateInviteCode'])->name('rooms.regenerate-invite');
 });
 
 

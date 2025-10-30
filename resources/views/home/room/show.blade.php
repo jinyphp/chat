@@ -35,8 +35,9 @@
                     <!-- 채팅방 아이콘 -->
                     <div class="me-3">
                         @if ($room && $room->image)
-                            <img src="{{ $room->image }}" alt="{{ $room->title }}" class="rounded-circle"
-                                style="width: 50px; height: 50px;">
+                            <img src="{{ asset('storage/' . $room->image) }}" alt="{{ $room->title }}"
+                                 class="rounded-circle object-fit-cover"
+                                 style="width: 50px; height: 50px;">
                         @else
                             <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center"
                                 style="width: 50px; height: 50px;">

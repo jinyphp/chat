@@ -208,7 +208,10 @@ class ChatMessages extends Component
             $formattedMessage = $this->formatMessage($message);
             $this->messages[] = $formattedMessage;
 
-            // 다른 컴포넌트에 메시지 전송 알림
+            // SSE를 통한 실시간 알림 (캐시 기반 간단한 방식)
+            $this->broadcastNewMessage($formattedMessage);
+
+            // 레거시 Livewire 이벤트 (호환성 유지)
             $this->dispatch('messageSent', [
                 'message' => $formattedMessage,
                 'room_id' => $this->roomId
@@ -351,51 +354,110 @@ class ChatMessages extends Component
         // 필요에 따라 메시지 목록에 참여/나가기 알림 추가
     }
 
-    public function pollForNewMessages()
+    /**
+     * SSE를 통해 새 메시지 수신 (JavaScript에서 호출)
+     */
+    public function handleSseMessage($messageData)
     {
         if (!$this->messagesLoaded) return;
 
-        // 마지막 메시지 이후의 새 메시지 체크
-        $lastMessageId = collect($this->messages)->max('id') ?? 0;
+        // 이미 존재하는 메시지인지 확인
+        $existingMessage = collect($this->messages)->firstWhere('id', $messageData['id']);
+        if ($existingMessage) {
+            return;
+        }
 
-        $newMessages = ChatMessage::where('room_id', $this->roomId)
-            ->where('id', '>', $lastMessageId)
-            ->orderBy('created_at', 'asc')
-            ->get();
+        // 자신의 메시지가 아닌 경우에만 추가
+        if ($messageData['sender_uuid'] !== $this->user->uuid) {
+            $this->messages[] = $messageData;
 
-        if ($newMessages->count() > 0) {
-            foreach ($newMessages as $message) {
-                if ($message->sender_uuid !== $this->user->uuid) {
-                    $formattedMessage = $this->formatMessage($message);
-                    $this->messages[] = $formattedMessage;
-
-                    // 새 메시지 자동 번역
-                    if ($this->showTranslations) {
-                        $this->translateMessage($formattedMessage['id']);
-                    }
-                }
+            // 새 메시지 자동 번역
+            if ($this->showTranslations) {
+                $this->translateMessage($messageData['id']);
             }
+
             $this->dispatch('scroll-to-bottom');
+        }
+    }
+
+    /**
+     * SSE 연결 상태 확인용 메서드
+     */
+    public function getSseEndpoint()
+    {
+        return route('chat.sse.stream', ['roomId' => $this->roomId]);
+    }
+
+    /**
+     * 마지막 메시지 ID 반환 (SSE 연결 시 사용)
+     */
+    public function getLastMessageId()
+    {
+        return collect($this->messages)->max('id') ?? 0;
+    }
+
+    /**
+     * SSE를 통한 새 메시지 브로드캐스팅
+     */
+    private function broadcastNewMessage($formattedMessage)
+    {
+        try {
+            // 캐시를 사용한 간단한 브로드캐스팅
+            // SSE 스트림에서 이 데이터를 확인하여 실시간 전송
+            $broadcastKey = "chat_broadcast:{$this->roomId}";
+            $broadcasts = \Cache::get($broadcastKey, []);
+
+            $broadcasts[] = [
+                'type' => 'new_message',
+                'message' => $formattedMessage,
+                'room_id' => $this->roomId,
+                'timestamp' => now()->toISOString(),
+                'sender_uuid' => $this->user->uuid
+            ];
+
+            // 최근 10개 브로드캐스트만 유지
+            if (count($broadcasts) > 10) {
+                $broadcasts = array_slice($broadcasts, -10);
+            }
+
+            \Cache::put($broadcastKey, $broadcasts, 60); // 1분 TTL
+
+            \Log::info('SSE 브로드캐스트 전송', [
+                'room_id' => $this->roomId,
+                'message_id' => $formattedMessage['id'],
+                'sender_uuid' => $this->user->uuid,
+                'broadcast_count' => count($broadcasts)
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('SSE 브로드캐스트 실패', [
+                'room_id' => $this->roomId,
+                'error' => $e->getMessage(),
+                'message_id' => $formattedMessage['id'] ?? 'unknown'
+            ]);
         }
     }
 
     public function startTyping()
     {
         $this->isTyping = true;
-        $this->dispatch('userTyping', [
-            'user_uuid' => $this->user->uuid,
-            'user_name' => $this->user->name,
-            'room_id' => $this->roomId
-        ]);
+        // SSE를 통해 타이핑 상태 전송
+        $this->dispatch('send-typing-status', ['is_typing' => true]);
     }
 
     public function stopTyping()
     {
         $this->isTyping = false;
-        $this->dispatch('userStoppedTyping', [
-            'user_uuid' => $this->user->uuid,
-            'room_id' => $this->roomId
-        ]);
+        // SSE를 통해 타이핑 상태 전송
+        $this->dispatch('send-typing-status', ['is_typing' => false]);
+    }
+
+    /**
+     * SSE를 통해 받은 타이핑 상태 업데이트
+     */
+    public function updateTypingUsers($typingUsers)
+    {
+        $this->typingUsers = $typingUsers;
     }
 
     #[On('userTyping')]

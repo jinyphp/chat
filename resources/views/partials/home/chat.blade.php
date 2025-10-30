@@ -39,62 +39,62 @@
         </li>
 
         <!-- 내 참여 채팅방 -->
-        <li class="nav-item">
+        {{-- <li class="nav-item">
             <a class="nav-link" href="#" onclick="loadMyRooms()">
                 <i class="fas fa-user-friends nav-icon"></i>
                 내 채팅방
                 <span class="badge bg-primary ms-auto" id="myRoomsCount">0</span>
             </a>
-        </li>
+        </li> --}}
 
         <!-- 내가 만든 채팅방 (방장) -->
-        <li class="nav-item">
+        {{-- <li class="nav-item">
             <a class="nav-link" href="#" onclick="loadMyOwnedRooms()">
                 <i class="fas fa-crown nav-icon text-warning"></i>
                 내가 만든 방
                 <span class="badge bg-warning ms-auto" id="myOwnedRoomsCount">0</span>
             </a>
-        </li>
+        </li> --}}
 
         <!-- 즐겨찾기 메시지 -->
-        <li class="nav-item">
+        {{-- <li class="nav-item">
             <a class="nav-link" href="#" onclick="loadFavoriteMessages()">
                 <i class="fas fa-star nav-icon"></i>
                 즐겨찾기
             </a>
-        </li>
+        </li> --}}
 
         <!-- 초대 링크 관리 -->
         <li class="nav-item">
-            <a class="nav-link" href="#" onclick="showInviteManager()">
+            <a class="nav-link" href="{{ route('home.chat.invites') }}">
                 <i class="fas fa-link nav-icon"></i>
                 초대 링크
             </a>
         </li>
 
         <!-- 구분선 -->
-        <li class="nav-divider"></li>
+        {{-- <li class="nav-divider"></li> --}}
 
         <!-- 채팅 설정 -->
-        <li class="nav-item">
+        {{-- <li class="nav-item">
             <a class="nav-link {{ request()->routeIs('home.chat.settings') ? 'active' : '' }}"
                href="{{ route('home.chat.settings') }}">
                 <i class="fas fa-cog nav-icon"></i>
                 설정
             </a>
-        </li>
+        </li> --}}
 
         <!-- 온라인 사용자 -->
-        <li class="nav-item">
+        {{-- <li class="nav-item">
             <a class="nav-link" href="#" onclick="showOnlineUsers()">
                 <i class="fas fa-circle text-success nav-icon"></i>
                 온라인 사용자
                 <span class="badge bg-success ms-auto" id="onlineUsersCount">0</span>
             </a>
-        </li>
+        </li> --}}
 
         <!-- 도움말 -->
-        <li class="nav-item nav-collapse">
+        {{-- <li class="nav-item nav-collapse">
             <a class="nav-sub-link" data-bs-toggle="collapse" href="#collapseHelp">
                 <i class="fas fa-question-circle nav-icon"></i>
                 도움말
@@ -121,7 +121,7 @@
                     </li>
                 </ul>
             </div>
-        </li>
+        </li> --}}
 
     </ul>
 </div>

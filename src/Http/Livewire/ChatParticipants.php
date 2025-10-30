@@ -34,6 +34,16 @@ class ChatParticipants extends Component
     public $inviteLink = '';
     public $backgroundColor = '#f8f9fa';
 
+    // 방 설정 데이터
+    public $settingsTitle = '';
+    public $settingsDescription = '';
+    public $settingsType = 'public';
+    public $settingsIsPublic = true;
+    public $settingsAllowJoin = true;
+    public $settingsAllowInvite = true;
+    public $settingsPassword = '';
+    public $settingsMaxParticipants = 0;
+
     // 언어 관련
     public $availableLanguages = [];
     public $editingParticipant = null;
@@ -68,7 +78,19 @@ class ChatParticipants extends Component
     {
         $this->room = ChatRoom::find($this->roomId);
         if ($this->room) {
-            $this->backgroundColor = $this->room->background_color ?? '#f8f9fa';
+            // ui_settings에서 background_color 로드
+            $uiSettings = $this->room->ui_settings ?? [];
+            $this->backgroundColor = $uiSettings['background_color'] ?? '#f8f9fa';
+
+            // 방 설정 데이터 로드
+            $this->settingsTitle = $this->room->title ?? '';
+            $this->settingsDescription = $this->room->description ?? '';
+            $this->settingsType = $this->room->type ?? 'public';
+            $this->settingsIsPublic = $this->room->is_public ?? true;
+            $this->settingsAllowJoin = $this->room->allow_join ?? true;
+            $this->settingsAllowInvite = $this->room->allow_invite ?? true;
+            $this->settingsPassword = ''; // 보안상 비밀번호는 빈 값으로 표시
+            $this->settingsMaxParticipants = $this->room->max_participants ?? 0;
         }
     }
 
@@ -363,25 +385,106 @@ class ChatParticipants extends Component
         $this->showSettingsModal = true;
     }
 
-    public function updateBackgroundColor()
+    public function updateRoomSettings()
     {
+        \Log::info('방 설정 업데이트 시작', [
+            'room_id' => $this->roomId,
+            'user_uuid' => $this->user->uuid ?? 'unknown',
+            'settings' => [
+                'title' => $this->settingsTitle,
+                'description' => $this->settingsDescription,
+                'type' => $this->settingsType,
+                'is_public' => $this->settingsIsPublic,
+                'allow_join' => $this->settingsAllowJoin,
+                'allow_invite' => $this->settingsAllowInvite,
+                'max_participants' => $this->settingsMaxParticipants,
+                'background_color' => $this->backgroundColor,
+            ]
+        ]);
+
         $this->validate([
+            'settingsTitle' => 'required|string|max:255',
+            'settingsDescription' => 'nullable|string|max:1000',
+            'settingsType' => 'required|in:public,private,group',
+            'settingsIsPublic' => 'boolean',
+            'settingsAllowJoin' => 'boolean',
+            'settingsAllowInvite' => 'boolean',
+            'settingsPassword' => 'nullable|string|min:4|max:255',
+            'settingsMaxParticipants' => 'nullable|integer|min:0|max:1000',
             'backgroundColor' => 'required|regex:/^#[a-fA-F0-9]{6}$/'
         ]);
 
         try {
-            $this->room->update(['background_color' => $this->backgroundColor]);
+            // 기존 UI 설정 가져오기
+            $uiSettings = $this->room->ui_settings ?? [];
+            $uiSettings['background_color'] = $this->backgroundColor;
+
+            $updateData = [
+                'title' => $this->settingsTitle,
+                'description' => $this->settingsDescription,
+                'type' => $this->settingsType,
+                'is_public' => $this->settingsIsPublic,
+                'allow_join' => $this->settingsAllowJoin,
+                'allow_invite' => $this->settingsAllowInvite,
+                'max_participants' => $this->settingsMaxParticipants ?: 0,
+                'ui_settings' => $uiSettings,
+                'updated_at' => now(),
+            ];
+
+            // 비밀번호가 입력된 경우에만 업데이트
+            if (!empty($this->settingsPassword)) {
+                $updateData['password'] = bcrypt($this->settingsPassword);
+            }
+
+            \Log::info('방 설정 업데이트 데이터', [
+                'room_id' => $this->roomId,
+                'update_data' => $updateData
+            ]);
+
+            $updated = $this->room->update($updateData);
+
+            \Log::info('방 설정 업데이트 결과', [
+                'room_id' => $this->roomId,
+                'updated' => $updated,
+                'room_after_update' => [
+                    'title' => $this->room->title,
+                    'description' => $this->room->description,
+                    'type' => $this->room->type,
+                    'is_public' => $this->room->is_public,
+                    'allow_join' => $this->room->allow_join,
+                    'allow_invite' => $this->room->allow_invite,
+                    'max_participants' => $this->room->max_participants,
+                    'ui_settings' => $this->room->ui_settings,
+                ]
+            ]);
+
             $this->showSettingsModal = false;
+
+            // 방 설정 변경 이벤트 발송
+            $this->dispatch('roomSettingsUpdated', [
+                'room_id' => $this->roomId,
+                'title' => $this->settingsTitle,
+                'background_color' => $this->backgroundColor
+            ]);
 
             // 메시지 컴포넌트에 배경색 변경 알림
             $this->dispatch('backgroundColorChanged', [
                 'color' => $this->backgroundColor
             ]);
 
-            session()->flash('success', '배경색이 변경되었습니다.');
+            session()->flash('success', '방 설정이 성공적으로 변경되었습니다.');
+
+            // 방 정보 다시 로드
+            $this->loadRoom();
 
         } catch (\Exception $e) {
-            session()->flash('error', '설정 저장 중 오류가 발생했습니다.');
+            \Log::error('방 설정 업데이트 실패', [
+                'room_id' => $this->roomId,
+                'error' => $e->getMessage(),
+                'user_uuid' => $this->user->uuid ?? 'unknown'
+            ]);
+
+            session()->flash('error', '설정 저장 중 오류가 발생했습니다. 다시 시도해 주세요.');
         }
     }
 
