@@ -18,7 +18,7 @@ class ChatRoutesTest extends TestCase
             ->get('/chat');
 
         $response->assertStatus(200);
-        $response->assertViewIs('jiny-chat::home.chat.index');
+        $response->assertViewIs('jiny-chat::home.dashboard.index');
     }
 
     /**

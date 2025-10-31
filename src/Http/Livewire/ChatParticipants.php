@@ -122,9 +122,66 @@ class ChatParticipants extends Component
 
     public function loadUser()
     {
-        // JWT 인증 확인
-        $this->user = \JwtAuth::user(request());
+        // 사용자 조회 (JWT + Shard 파사드 기반)
+        $this->user = null;
+
+        // 1. JWT 인증으로 사용자 정보 확인
+        if (class_exists('\JwtAuth') && method_exists('\JwtAuth', 'user')) {
+            try {
+                $jwtUser = \JwtAuth::user(request());
+                if ($jwtUser && isset($jwtUser->uuid)) {
+                    // JWT 사용자 정보로 샤딩된 테이블에서 실제 사용자 조회
+                    $this->user = \Jiny\Auth\Facades\Shard::getUserByUuid($jwtUser->uuid);
+
+                    if ($this->user) {
+                        \Log::info('ChatParticipants - JWT + Shard 사용자 로드 성공', [
+                            'uuid' => $this->user->uuid,
+                            'name' => $this->user->name,
+                            'email' => $this->user->email,
+                            'shard_table' => $this->user->getTable() ?? 'unknown'
+                        ]);
+                    } else {
+                        \Log::warning('ChatParticipants - JWT 사용자를 샤딩 테이블에서 찾을 수 없음', [
+                            'jwt_uuid' => $jwtUser->uuid,
+                            'jwt_name' => $jwtUser->name ?? 'unknown',
+                            'jwt_email' => $jwtUser->email ?? 'unknown'
+                        ]);
+                    }
+                }
+            } catch (\Exception $e) {
+                \Log::warning('ChatParticipants - JWT 인증 실패', [
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        // 2. 세션 인증 사용자 확인 (일반 users 테이블)
         if (!$this->user) {
+            $sessionUser = auth()->user();
+            if ($sessionUser && isset($sessionUser->uuid)) {
+                // 세션 사용자도 샤딩된 테이블에서 조회 시도
+                $this->user = \Jiny\Auth\Facades\Shard::getUserByUuid($sessionUser->uuid);
+
+                if (!$this->user) {
+                    // 샤딩된 테이블에 없으면 세션 사용자 그대로 사용
+                    $this->user = $sessionUser;
+                }
+
+                \Log::info('ChatParticipants - 세션 사용자 로드', [
+                    'uuid' => $this->user->uuid,
+                    'name' => $this->user->name,
+                    'email' => $this->user->email,
+                    'from_shard' => !($this->user === $sessionUser)
+                ]);
+            }
+        }
+
+        if (!$this->user) {
+            \Log::error('ChatParticipants - 사용자를 찾을 수 없음', [
+                'room_id' => $this->roomId,
+                'jwt_available' => class_exists('\JwtAuth'),
+                'session_user' => auth()->check()
+            ]);
             throw new \Exception('인증된 사용자를 찾을 수 없습니다.');
         }
 
@@ -132,20 +189,21 @@ class ChatParticipants extends Component
         $this->participant = $this->participants->firstWhere('user_uuid', $this->user->uuid);
 
         // 디버깅을 위한 로그
-        \Log::info('Current authenticated user', [
+        \Log::info('ChatParticipants - 인증된 사용자 정보', [
             'uuid' => $this->user->uuid,
             'email' => $this->user->email,
-            'name' => $this->user->name
+            'name' => $this->user->name,
+            'table' => method_exists($this->user, 'getTable') ? $this->user->getTable() : 'users'
         ]);
 
         if ($this->participant) {
-            \Log::info('Found participant for current user', [
+            \Log::info('ChatParticipants - 참여자 정보 찾음', [
                 'participant_id' => $this->participant->id,
                 'role' => $this->participant->role,
                 'user_uuid' => $this->participant->user_uuid
             ]);
         } else {
-            \Log::warning('No participant found for current user', [
+            \Log::warning('ChatParticipants - 현재 사용자의 참여자 정보 없음', [
                 'user_uuid' => $this->user->uuid,
                 'participants_count' => $this->participants->count()
             ]);
@@ -725,6 +783,58 @@ class ChatParticipants extends Component
     {
         $this->showRemoveModal = false;
         $this->removingParticipant = null;
+    }
+
+    /**
+     * Polling을 위한 참여자 새로고침 메서드
+     */
+    public function refreshParticipants()
+    {
+        try {
+            // 기존 참여자 수
+            $currentParticipantCount = count($this->participants);
+
+            // 새로운 참여자 목록 로드
+            $this->loadParticipants();
+
+            // 온라인 참여자 목록 업데이트 (시뮬레이션)
+            $this->updateOnlineParticipants();
+
+            // 변경사항이 있는 경우 로그
+            $newParticipantCount = count($this->participants);
+            if ($currentParticipantCount !== $newParticipantCount) {
+                \Log::info('Polling: 참여자 목록 변경됨', [
+                    'room_id' => $this->roomId,
+                    'previous_count' => $currentParticipantCount,
+                    'current_count' => $newParticipantCount
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('Polling 참여자 새로고침 실패', [
+                'room_id' => $this->roomId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 온라인 참여자 목록 업데이트 (시뮬레이션)
+     */
+    private function updateOnlineParticipants()
+    {
+        // 실제 구현에서는 Redis나 세션을 통해 온라인 상태를 확인
+        // 현재는 시뮬레이션으로 랜덤하게 일부 참여자를 온라인으로 표시
+        $onlineCount = min(count($this->participants), rand(1, 3));
+        $this->onlineParticipants = collect($this->participants)
+            ->random(min($onlineCount, count($this->participants)))
+            ->pluck('user_uuid')
+            ->toArray();
+
+        // 현재 사용자는 항상 온라인으로 표시
+        if ($this->user && !in_array($this->user->uuid, $this->onlineParticipants)) {
+            $this->onlineParticipants[] = $this->user->uuid;
+        }
     }
 
     public function render()

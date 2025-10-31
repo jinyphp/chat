@@ -1,272 +1,173 @@
-<div>
-    <div class="chat-window">
-        <div class="chat-sticky-header sticky-top bg-white">
-            <div class="px-4 pt-3 pb-4">
-                <!-- heading -->
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                        <h1 class="mb-0 fw-bold h2">참여자 ({{ count($participants) }})</h1>
-                    </div>
-                    <!-- add member dropdown -->
-                    <div>
-                        @if ($participant && in_array($participant->role, ['owner', 'admin']))
-                            <a href="#" class="btn btn-primary rounded-circle btn-icon texttooltip"
-                                wire:click="showAddMember">
-                                <i class="fas fa-user-plus"></i>
-                                <div id="addmember" class="d-none">
-                                    <span>멤버 추가</span>
-                                </div>
-                            </a>
-                            <span class="dropdown">
-                                <a href="#" class="btn btn-light btn-icon rounded-circle" id="inviteLink"
-                                    data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                    <i class="fas fa-link"></i>
-                                </a>
-                                <ul class="dropdown-menu" aria-labelledby="inviteLink">
-                                    <li><a class="dropdown-item" href="#" wire:click="generateInviteLink">
-                                            <i class="fas fa-link me-2"></i> 초대 링크
-                                        </a></li>
-                                </ul>
-                            </span>
-                        @endif
-                    </div>
-                </div>
+<!-- 채팅방 참여자 목록 컴포넌트 (Polling: 3초 간격 자동 새로고침) -->
+<div class="chat-participants-wrapper" wire:poll.3s="refreshParticipants">
+<div class="card h-100 border-0 d-flex flex-column">
+    <!-- Card Header -->
+    <div class="card-header bg-white border-bottom px-3 py-3 flex-shrink-0">
+        <div class="d-flex align-items-center justify-content-between">
+            <h6 class="mb-0 fw-bold">
+                <i class="fas fa-users text-primary me-2"></i>
+                참여자 ({{ count($participants) }})
+            </h6>
 
-                <!-- search -->
-                <div class="mt-4 mb-4">
-                    <input type="search" class="form-control form-control-sm"
-                        placeholder="Search people, group and messages">
-                </div>
-
-                <div class="mt-4 mb-4 d-flex gap-2">
-                    @if ($participant && $participant->role === 'owner')
-                        <button class="btn btn-outline-primary btn-sm flex-fill" wire:click="showSettings">
-                            <i class="fas fa-cog me-1"></i> 방 설정
-                        </button>
-                    @endif
-                    <button class="btn btn-outline-danger btn-sm flex-fill" wire:click="leaveRoom">
-                        <i class="fas fa-sign-out-alt me-1"></i> 방 나가기
+            @if($participant && in_array($participant->role, ['owner', 'admin']))
+                <div class="dropdown">
+                    <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                        <i class="fas fa-user-plus"></i>
                     </button>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#" wire:click="showAddMember">
+                            <i class="fas fa-user-plus me-2"></i> 멤버 추가
+                        </a></li>
+                        <li><a class="dropdown-item" href="#" wire:click="generateInviteLink">
+                            <i class="fas fa-link me-2"></i> 초대 링크
+                        </a></li>
+                    </ul>
                 </div>
-                <!-- User chat -->
-
-                {{-- <div class="d-flex justify-content-between align-items-center">
-                    <!-- media -->
-                    <a href="#" class="text-link">
-                        <div class="d-flex">
-                            <div class="avatar avatar-md avatar-indicators avatar-online">
-                                <img src="../../assets/images/avatar/avatar-1.jpg" alt=""
-                                    class="rounded-circle">
-                            </div>
-                            <!-- media body -->
-                            <div class="ms-2">
-                                <h5 class="mb-0">Jitu Chauhan</h5>
-                                <p class="mb-0">Online</p>
-                            </div>
-                        </div>
-                    </a>
-                    <!-- dropdown -->
-                    <div class="dropdown dropstart">
-                        <a href="#" class="text-link" id="userSetting" data-bs-toggle="dropdown"
-                            aria-haspopup="true" aria-expanded="false">
-                            <i class="fe fe-more-horizontal fs-3"></i>
-                        </a>
-                        <ul class="dropdown-menu" aria-labelledby="userSetting" style="">
-                            <li class="dropdown-animation dropdown-submenu dropdown-toggle-none">
-                                <a class="dropdown-item dropdown-toggle" href="#" aria-haspopup="true"
-                                    aria-expanded="false" data-bs-toggle="dropdown">
-                                    <i class="fe fe-circle dropdown-item-icon"></i>
-                                    Status
-                                </a>
-                                <ul class="dropdown-menu dropdown-menu-xs">
-                                    <li>
-                                        <a class="dropdown-item" href="#">
-                                            <span class="badge-dot bg-success me-2"></span>
-                                            Online
-                                        </a>
-                                    </li>
-                                    <li>
-                                        <a class="dropdown-item" href="#">
-                                            <span class="badge-dot bg-secondary me-2"></span>
-                                            Offline
-                                        </a>
-                                    </li>
-                                    <li>
-                                        <a class="dropdown-item" href="#">
-                                            <span class="badge-dot bg-warning me-2"></span>
-                                            Away
-                                        </a>
-                                    </li>
-                                    <li>
-                                        <a class="dropdown-item" href="#">
-                                            <span class="badge-dot bg-danger me-2"></span>
-                                            Busy
-                                        </a>
-                                    </li>
-                                </ul>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fe fe-settings dropdown-item-icon"></i>
-                                    Setting
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fe fe-user dropdown-item-icon"></i>
-                                    Profile
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="#">
-                                    <i class="fe fe-power dropdown-item-icon"></i>
-                                    Sign Out
-                                </a>
-                            </li>
-                        </ul>
-                    </div>
-                </div> --}}
-            </div>
-        </div>
-
-        <div data-simplebar="init" style="height: 100vh; overflow: auto"
-            class="simplebar-scrollable-y simplebar-scrollable-x">
-            <div class="simplebar-wrapper" style="margin: 0px;">
-                <div class="simplebar-height-auto-observer-wrapper">
-                    <div class="simplebar-height-auto-observer"></div>
-                </div>
-                <div class="simplebar-mask">
-                    <div class="simplebar-offset" style="right: 0px; bottom: 0px;">
-                        <div class="simplebar-content-wrapper" tabindex="0" role="region"
-                            aria-label="scrollable content" style="height: 100%; overflow: scroll;">
-                            <div class="simplebar-content" style="padding: 0px;">
-
-                                <ul class="list-unstyled contacts-list">
-                                    @foreach ($participants as $p)
-                                        <li class="py-3 px-4 chat-item contacts-item">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <a href="#" class="text-link contacts-link">
-                                                    <!-- media -->
-                                                    <div class="d-flex">
-                                                        <div
-                                                            class="avatar avatar-md avatar-indicators {{ in_array($p->user_uuid, $onlineParticipants) ? 'avatar-online' : 'avatar-offline' }}">
-                                                            @if ($p->avatar)
-                                                                <img src="{{ $p->avatar }}" alt="{{ $p->name }}"
-                                                                    class="rounded-circle">
-                                                            @else
-                                                                <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold"
-                                                                    style="width: 44px; height: 44px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); font-size: 16px;">
-                                                                    {{ mb_substr($p->name, 0, 1) }}
-                                                                </div>
-                                                            @endif
-                                                        </div>
-                                                        <!-- media body -->
-                                                        <div class="ms-2">
-                                                            <div class="d-flex align-items-center mb-1">
-                                                                <h5 class="mb-0 me-2">{{ $p->name }}</h5>
-                                                                @if ($p->role === 'owner')
-                                                                    <span class="badge bg-warning text-dark"
-                                                                        style="font-size: 10px;">
-                                                                        <i class="fas fa-crown"></i> 방장
-                                                                    </span>
-                                                                @endif
-                                                                @if ($p->user_uuid === $user->uuid)
-                                                                    <span class="badge bg-primary ms-1"
-                                                                        style="font-size: 10px;">나</span>
-                                                                @endif
-                                                            </div>
-                                                            <p
-                                                                class="mb-0 text-{{ in_array($p->user_uuid, $onlineParticipants) ? 'success' : 'muted' }}">
-                                                                {{ in_array($p->user_uuid, $onlineParticipants) ? 'Online' : 'Offline' }}
-                                                                <span
-                                                                    class="ms-2">{{ $this->getLanguageFlag($p->language ?? 'ko') }}</span>
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                </a>
-                                                <div>
-                                                    <small
-                                                        class="text-muted">{{ $p->joined_at ? $p->joined_at->format('n/j/Y') : '' }}</small>
-                                                </div>
-                                            </div>
-
-                                            @php
-                                                $isCurrentUser = $user && $p->user_uuid === $user->uuid;
-                                                $isOwnerOrAdmin =
-                                                    $participant && in_array($participant->role, ['owner', 'admin']);
-                                                $canEditOthers = $isOwnerOrAdmin && !$isCurrentUser;
-                                                $hasAnyOptions = $isCurrentUser || $canEditOthers;
-                                            @endphp
-
-                                            @if ($hasAnyOptions)
-                                                <!-- chat actions -->
-                                                <div class="chat-actions">
-                                                    <!-- dropdown -->
-                                                    <div class="dropdown dropstart">
-                                                        <a href="#"
-                                                            class="btn btn-white btn-icon btn-sm rounded-circle primary-hover"
-                                                            data-bs-toggle="dropdown" aria-haspopup="true"
-                                                            aria-expanded="false">
-                                                            <i class="fe fe-more-horizontal fs-3"></i>
-                                                        </a>
-                                                        <div class="dropdown-menu">
-                                                            @if ($isCurrentUser)
-                                                                <a class="dropdown-item" href="#"
-                                                                    wire:click="editOwnProfile">
-                                                                    <i class="fas fa-user-edit dropdown-item-icon"></i>
-                                                                    내 정보 수정
-                                                                </a>
-                                                            @endif
-
-                                                            @if ($canEditOthers)
-                                                                <a class="dropdown-item" href="#"
-                                                                    wire:click="editParticipant({{ $p->id }})">
-                                                                    <i class="fas fa-edit dropdown-item-icon"></i>
-                                                                    정보 수정
-                                                                </a>
-                                                                <a class="dropdown-item" href="#"
-                                                                    wire:click="showLanguageSettings({{ $p->id }})">
-                                                                    <i class="fas fa-language dropdown-item-icon"></i>
-                                                                    언어 설정
-                                                                </a>
-                                                                @if ($p->role !== 'owner')
-                                                                    <a class="dropdown-item text-danger" href="#"
-                                                                        wire:click="confirmRemoveParticipant({{ $p->id }})">
-                                                                        <i
-                                                                            class="fas fa-user-times dropdown-item-icon"></i>
-                                                                        멤버 제거
-                                                                    </a>
-                                                                @endif
-                                                            @endif
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            @endif
-                                        </li>
-                                    @endforeach
-                                </ul>
-
-
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="simplebar-placeholder" style="width: 258px; height: 1520px;"></div>
-            </div>
-            <div class="simplebar-track simplebar-horizontal" style="visibility: visible;">
-                <div class="simplebar-scrollbar"
-                    style="width: 168px; transform: translate3d(0px, 0px, 0px); display: block;"></div>
-            </div>
-            <div class="simplebar-track simplebar-vertical" style="visibility: visible;">
-                <div class="simplebar-scrollbar"
-                    style="height: 508px; transform: translate3d(0px, 0px, 0px); display: block;"></div>
-            </div>
+            @endif
         </div>
     </div>
 
+    <!-- Card Body - 참여자 목록 -->
+    <div class="card-body p-0 overflow-auto flex-grow-1">
+        <!-- 알림 메시지 -->
+        @if(session()->has('success'))
+            <div class="alert alert-success alert-dismissible fade show m-3" role="alert">
+                {{ session('success') }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        @endif
+
+        @if(session()->has('error'))
+            <div class="alert alert-danger alert-dismissible fade show m-3" role="alert">
+                {{ session('error') }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        @endif
+
+        @foreach ($participants as $p)
+            <div class="p-3 border-bottom {{ $p->user_uuid === $user->uuid ? 'bg-light' : '' }}">
+                <div class="d-flex align-items-center">
+                    <!-- 아바타 -->
+                    <div class="position-relative me-3">
+                        @if ($p->avatar)
+                            <img src="{{ $p->avatar }}" alt="{{ $p->name }}"
+                                 class="rounded-circle" style="width: 44px; height: 44px; object-fit: cover;">
+                        @else
+                            <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold"
+                                 style="width: 44px; height: 44px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); font-size: 16px;">
+                                {{ mb_substr($p->name, 0, 1) }}
+                            </div>
+                        @endif
+
+                        <!-- 온라인 상태 -->
+                        @if (in_array($p->user_uuid, $onlineParticipants))
+                            <span class="position-absolute bottom-0 end-0 bg-success border border-white rounded-circle"
+                                  style="width: 14px; height: 14px;"></span>
+                        @endif
+                    </div>
+
+                    <!-- 사용자 정보 -->
+                    <div class="flex-grow-1">
+                        <!-- 첫 번째 줄: 이름과 온라인 상태 -->
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <div class="d-flex align-items-center">
+                                <span class="fw-medium me-2">{{ $p->name }}</span>
+                                <small class="text-{{ in_array($p->user_uuid, $onlineParticipants) ? 'success' : 'muted' }}">
+                                    {{ in_array($p->user_uuid, $onlineParticipants) ? 'Online' : 'Offline' }}
+                                </small>
+                            </div>
+
+                            <!-- 액션 버튼들 -->
+                            @php
+                                $isCurrentUser = $user && $p->user_uuid === $user->uuid;
+                                $isOwnerOrAdmin = $participant && in_array($participant->role, ['owner', 'admin']);
+                                $canEditOthers = $isOwnerOrAdmin && !$isCurrentUser;
+                                $hasAnyOptions = $isCurrentUser || $canEditOthers;
+                            @endphp
+
+                            @if($hasAnyOptions)
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                                            type="button" data-bs-toggle="dropdown"
+                                            style="font-size: 11px; padding: 3px 8px;">
+                                        <i class="fas fa-ellipsis-v"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <!-- 디버깅 정보 (개발용) -->
+                                        @if(config('app.debug'))
+                                            <li><small class="dropdown-item-text text-muted">
+                                                현재: {{ $user->uuid ?? 'null' }}<br>
+                                                참여자: {{ $p->user_uuid }}<br>
+                                                본인: {{ $isCurrentUser ? 'O' : 'X' }}<br>
+                                                권한: {{ $participant->role ?? 'none' }}
+                                            </small></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                        @endif
+
+                                        <!-- 자신의 정보 수정 (본인만) -->
+                                        @if($isCurrentUser)
+                                            <li><a class="dropdown-item" href="#" wire:click="editOwnProfile">
+                                                <i class="fas fa-user-edit me-2"></i> 내 정보 수정
+                                            </a></li>
+                                        @endif
+
+                                        <!-- 방장/관리자 기능 (다른 사람만) -->
+                                        @if($canEditOthers)
+                                            <li><a class="dropdown-item" href="#" wire:click="editParticipant({{ $p->id }})">
+                                                <i class="fas fa-edit me-2"></i> 정보 수정
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" wire:click="showLanguageSettings({{ $p->id }})">
+                                                <i class="fas fa-language me-2"></i> 언어 설정
+                                            </a></li>
+                                            @if($p->role !== 'owner')
+                                                <li><hr class="dropdown-divider"></li>
+                                                <li><a class="dropdown-item text-danger" href="#" wire:click="confirmRemoveParticipant({{ $p->id }})">
+                                                    <i class="fas fa-user-times me-2"></i> 멤버 제거
+                                                </a></li>
+                                            @endif
+                                        @endif
+                                    </ul>
+                                </div>
+                            @endif
+                        </div>
+
+                        <!-- 두 번째 줄: 배지들 -->
+                        <div class="d-flex align-items-center flex-wrap gap-1">
+                            @if ($p->role === 'owner')
+                                <span class="badge bg-warning text-dark" style="font-size: 10px;">
+                                    <i class="fas fa-crown"></i> 방장
+                                </span>
+                            @endif
+
+                            @if ($p->user_uuid === $user->uuid)
+                                <span class="badge bg-primary" style="font-size: 10px;">나</span>
+                            @endif
+
+                            <!-- 국기로 언어 표시 -->
+                            <span style="font-size: 18px;">
+                                {{ $this->getLanguageFlag($p->language ?? 'ko') }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        @endforeach
+    </div>
+
+    <!-- Card Footer - 액션 버튼들 -->
+    <div class="card-footer border-top bg-white p-3 flex-shrink-0">
+        @if($participant && $participant->role === 'owner')
+            <button class="btn btn-outline-primary btn-sm w-100 mb-2" wire:click="showSettings">
+                <i class="fas fa-cog me-1"></i> 방 설정
+            </button>
+        @endif
+        <button class="btn btn-outline-danger btn-sm w-100" wire:click="leaveRoom">
+            <i class="fas fa-sign-out-alt me-1"></i> 방 나가기
+        </button>
+    </div>
 
     <!-- 멤버 추가 모달 -->
-    @if ($showAddMemberModal)
+    @if($showAddMemberModal)
         <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
             <div class="modal-dialog">
                 <div class="modal-content">
@@ -281,11 +182,11 @@
                             <div class="mb-3">
                                 <label class="form-label">이메일 주소</label>
                                 <div class="position-relative">
-                                    <input type="email"
-                                        class="form-control {{ $emailValidation === 'invalid' ? 'is-invalid' : ($emailValidation === 'valid' ? 'is-valid' : '') }}"
-                                        wire:model.live="memberEmail" placeholder="초대할 사용자의 이메일을 입력하세요">
+                                    <input type="email" class="form-control {{ $emailValidation === 'invalid' ? 'is-invalid' : ($emailValidation === 'valid' ? 'is-valid' : '') }}"
+                                           wire:model.live="memberEmail"
+                                           placeholder="초대할 사용자의 이메일을 입력하세요">
 
-                                    @if ($emailValidation === 'checking')
+                                    @if($emailValidation === 'checking')
                                         <div class="position-absolute end-0 top-50 translate-middle-y me-3">
                                             <div class="spinner-border spinner-border-sm text-primary" role="status">
                                                 <span class="visually-hidden">확인 중...</span>
@@ -306,10 +207,9 @@
                                     @endif
                                 </div>
 
-                                @if ($emailValidation === 'valid' && $validatedUser)
+                                @if($emailValidation === 'valid' && $validatedUser)
                                     <div class="text-success small mt-1">
-                                        <i class="fas fa-user"></i> {{ $validatedUser->name }}
-                                        ({{ $validatedUser->email }})
+                                        <i class="fas fa-user"></i> {{ $validatedUser->name }} ({{ $validatedUser->email }})
                                     </div>
                                 @elseif($emailValidation === 'invalid')
                                     <div class="text-danger small mt-1">등록된 회원을 찾을 수 없습니다.</div>
@@ -324,10 +224,9 @@
                             <div class="mb-3">
                                 <label class="form-label">기본 언어</label>
                                 <select class="form-select" wire:model="memberLanguage" style="font-size: 16px;">
-                                    @foreach ($availableLanguages as $lang)
+                                    @foreach($availableLanguages as $lang)
                                         <option value="{{ $lang['code'] }}">
-                                            {{ $lang['flag'] ?? '🌐' }} {{ $lang['native_name'] }}
-                                            ({{ $lang['name'] }})
+                                            {{ $lang['flag'] ?? '🌐' }}  {{ $lang['native_name'] }} ({{ $lang['name'] }})
                                         </option>
                                     @endforeach
                                 </select>
@@ -336,11 +235,11 @@
                                 @enderror
                             </div>
                             <div class="d-flex justify-content-end gap-2">
-                                <button type="button" class="btn btn-secondary"
-                                    wire:click="closeAddMember">취소</button>
-                                <button type="submit" class="btn btn-primary"
-                                    {{ $emailValidation !== 'valid' ? 'disabled' : '' }}>
-                                    @if ($emailValidation === 'checking')
+                                <button type="button" class="btn btn-secondary" wire:click="closeAddMember">취소</button>
+                                <button type="submit"
+                                        class="btn btn-primary"
+                                        {{ $emailValidation !== 'valid' ? 'disabled' : '' }}>
+                                    @if($emailValidation === 'checking')
                                         <i class="fas fa-spinner fa-spin me-1"></i> 확인 중
                                     @else
                                         추가
@@ -355,7 +254,7 @@
     @endif
 
     <!-- 초대 링크 모달 -->
-    @if ($showInviteModal)
+    @if($showInviteModal)
         <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
             <div class="modal-dialog">
                 <div class="modal-content">
@@ -369,8 +268,7 @@
                         <div class="mb-3">
                             <label class="form-label">초대 링크</label>
                             <div class="input-group">
-                                <input type="text" class="form-control" value="{{ $inviteLink }}" readonly
-                                    id="inviteLink">
+                                <input type="text" class="form-control" value="{{ $inviteLink }}" readonly id="inviteLink">
                                 <button class="btn btn-outline-secondary" onclick="copyInviteLink()">
                                     <i class="fas fa-copy"></i> 복사
                                 </button>
@@ -380,8 +278,7 @@
 
                         <div class="mb-3">
                             <div class="alert alert-info">
-                                <h6 class="alert-heading"><i class="fas fa-info-circle me-1"></i> 초대 링크 정보
-                                </h6>
+                                <h6 class="alert-heading"><i class="fas fa-info-circle me-1"></i> 초대 링크 정보</h6>
                                 <ul class="mb-0 small">
                                     <li><strong>유효기간:</strong> 24시간</li>
                                     <li><strong>사용 제한:</strong> 무제한</li>
@@ -428,8 +325,7 @@
 
                         function shareViaEmail() {
                             const subject = encodeURIComponent('채팅방 초대');
-                            const body = encodeURIComponent(
-                                `안녕하세요! 채팅방에 초대드립니다.\n\n아래 링크를 클릭하여 참여해주세요:\n${document.getElementById('inviteLink').value}`);
+                            const body = encodeURIComponent(`안녕하세요! 채팅방에 초대드립니다.\n\n아래 링크를 클릭하여 참여해주세요:\n${document.getElementById('inviteLink').value}`);
                             window.open(`mailto:?subject=${subject}&body=${body}`);
                         }
 
@@ -456,8 +352,7 @@
                             const toast = document.createElement('div');
                             toast.className = `alert alert-${type} position-fixed`;
                             toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
-                            toast.innerHTML =
-                                `${message} <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>`;
+                            toast.innerHTML = `${message} <button type="button" class="btn-close" onclick="this.parentElement.remove()"></button>`;
                             document.body.appendChild(toast);
 
                             setTimeout(() => {
@@ -473,7 +368,7 @@
     @endif
 
     <!-- 방 설정 모달 -->
-    @if ($showSettingsModal)
+    @if($showSettingsModal)
         <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
             <div class="modal-dialog modal-lg">
                 <div class="modal-content">
@@ -487,20 +382,17 @@
                         <!-- 탭 네비게이션 -->
                         <ul class="nav nav-tabs mb-3" id="settingsTab" role="tablist">
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link active" id="basic-tab" data-bs-toggle="tab"
-                                    data-bs-target="#basic" type="button" role="tab">
+                                <button class="nav-link active" id="basic-tab" data-bs-toggle="tab" data-bs-target="#basic" type="button" role="tab">
                                     <i class="fas fa-info-circle me-1"></i> 기본정보
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link" id="access-tab" data-bs-toggle="tab"
-                                    data-bs-target="#access" type="button" role="tab">
+                                <button class="nav-link" id="access-tab" data-bs-toggle="tab" data-bs-target="#access" type="button" role="tab">
                                     <i class="fas fa-shield-alt me-1"></i> 접근설정
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
-                                <button class="nav-link" id="appearance-tab" data-bs-toggle="tab"
-                                    data-bs-target="#appearance" type="button" role="tab">
+                                <button class="nav-link" id="appearance-tab" data-bs-toggle="tab" data-bs-target="#appearance" type="button" role="tab">
                                     <i class="fas fa-palette me-1"></i> 외관설정
                                 </button>
                             </li>
@@ -511,29 +403,29 @@
                             <div class="tab-content" id="settingsTabContent">
                                 <!-- 기본정보 탭 -->
                                 <div class="tab-pane fade show active" id="basic" role="tabpanel">
-
+                                    {{-- 채팅방 제목 --}}
                                     <div class="mb-3">
                                         <label class="form-label fw-semibold">
                                             채팅방 제목 <span class="text-danger">*</span>
                                         </label>
                                         <input type="text" class="form-control" wire:model="settingsTitle"
-                                            placeholder="채팅방 제목을 입력하세요" required maxlength="255">
+                                               placeholder="채팅방 제목을 입력하세요" required maxlength="255">
                                         @error('settingsTitle')
                                             <div class="text-danger small">{{ $message }}</div>
                                         @enderror
                                     </div>
 
-
+                                    {{-- 설명 --}}
                                     <div class="mb-3">
                                         <label class="form-label fw-semibold">설명</label>
-                                        <textarea class="form-control" wire:model="settingsDescription" rows="3" placeholder="채팅방에 대한 설명을 입력하세요"
-                                            maxlength="1000"></textarea>
+                                        <textarea class="form-control" wire:model="settingsDescription" rows="3"
+                                                  placeholder="채팅방에 대한 설명을 입력하세요" maxlength="1000"></textarea>
                                         @error('settingsDescription')
                                             <div class="text-danger small">{{ $message }}</div>
                                         @enderror
                                     </div>
 
-
+                                    {{-- 채팅방 타입 --}}
                                     <div class="mb-3">
                                         <label class="form-label fw-semibold">채팅방 타입</label>
                                         <select class="form-select" wire:model="settingsType">
@@ -552,12 +444,11 @@
                                         @enderror
                                     </div>
 
-
+                                    {{-- 최대 참여자 수 --}}
                                     <div class="mb-3">
                                         <label class="form-label fw-semibold">최대 참여자 수</label>
-                                        <input type="number" class="form-control"
-                                            wire:model="settingsMaxParticipants" min="0" max="1000"
-                                            placeholder="0 (무제한)">
+                                        <input type="number" class="form-control" wire:model="settingsMaxParticipants"
+                                               min="0" max="1000" placeholder="0 (무제한)">
                                         <div class="form-text small">0 또는 비워두면 무제한, 2-1000명 범위에서 제한 가능</div>
                                         @error('settingsMaxParticipants')
                                             <div class="text-danger small">{{ $message }}</div>
@@ -567,11 +458,11 @@
 
                                 <!-- 접근설정 탭 -->
                                 <div class="tab-pane fade" id="access" role="tabpanel">
-
+                                    {{-- 접근 권한 --}}
                                     <div class="mb-4">
                                         <div class="form-check mb-3">
                                             <input id="settings_is_public" type="checkbox" value="1"
-                                                wire:model="settingsIsPublic" class="form-check-input">
+                                                   wire:model="settingsIsPublic" class="form-check-input">
                                             <label for="settings_is_public" class="form-check-label">
                                                 <div class="fw-semibold">
                                                     <i class="fas fa-search text-primary me-1"></i> 검색 가능
@@ -582,7 +473,7 @@
 
                                         <div class="form-check mb-3">
                                             <input id="settings_allow_join" type="checkbox" value="1"
-                                                wire:model="settingsAllowJoin" class="form-check-input">
+                                                   wire:model="settingsAllowJoin" class="form-check-input">
                                             <label for="settings_allow_join" class="form-check-label">
                                                 <div class="fw-semibold">
                                                     <i class="fas fa-door-open text-success me-1"></i> 자유 참여 허용
@@ -593,7 +484,7 @@
 
                                         <div class="form-check mb-3">
                                             <input id="settings_allow_invite" type="checkbox" value="1"
-                                                wire:model="settingsAllowInvite" class="form-check-input">
+                                                   wire:model="settingsAllowInvite" class="form-check-input">
                                             <label for="settings_allow_invite" class="form-check-label">
                                                 <div class="fw-semibold">
                                                     <i class="fas fa-user-plus text-info me-1"></i> 초대 허용
@@ -603,13 +494,14 @@
                                         </div>
                                     </div>
 
-
+                                    {{-- 비밀번호 --}}
                                     <div class="mb-3">
                                         <label class="form-label fw-semibold">
                                             <i class="fas fa-key text-warning me-1"></i> 비밀번호 (선택사항)
                                         </label>
-                                        <input type="password" class="form-control" wire:model="settingsPassword"
-                                            placeholder="참여 시 필요한 비밀번호" minlength="4">
+                                        <input type="password" class="form-control"
+                                               wire:model="settingsPassword" placeholder="참여 시 필요한 비밀번호"
+                                               minlength="4">
                                         <div class="form-text small">비밀번호를 설정하면 참여 시 비밀번호 입력이 필요합니다</div>
                                         @error('settingsPassword')
                                             <div class="text-danger small">{{ $message }}</div>
@@ -619,22 +511,20 @@
 
                                 <!-- 외관설정 탭 -->
                                 <div class="tab-pane fade" id="appearance" role="tabpanel">
-
+                                    {{-- 배경색 --}}
                                     <div class="mb-4">
                                         <label class="form-label fw-semibold">배경색</label>
                                         <div class="row g-3">
                                             <div class="col-md-4">
                                                 <label class="form-label small">색상 선택</label>
                                                 <input type="color" class="form-control form-control-color w-100"
-                                                    wire:model="backgroundColor" style="height: 50px;">
+                                                       wire:model="backgroundColor" style="height: 50px;">
                                             </div>
                                             <div class="col-md-8">
                                                 <label class="form-label small">색상 코드</label>
-                                                <input type="text" class="form-control"
-                                                    wire:model="backgroundColor" placeholder="#f8f9fa"
-                                                    pattern="^#[a-fA-F0-9]{6}$">
-                                                <div class="form-text small">16진수 색상 코드를 입력하세요 (예: #f8f9fa)
-                                                </div>
+                                                <input type="text" class="form-control" wire:model="backgroundColor"
+                                                       placeholder="#f8f9fa" pattern="^#[a-fA-F0-9]{6}$">
+                                                <div class="form-text small">16진수 색상 코드를 입력하세요 (예: #f8f9fa)</div>
                                             </div>
                                         </div>
                                         @error('backgroundColor')
@@ -642,20 +532,18 @@
                                         @enderror
                                     </div>
 
-
+                                    {{-- 미리보기 --}}
                                     <div class="mb-3">
                                         <label class="form-label fw-semibold">미리보기</label>
-                                        <div class="border rounded p-3"
-                                            style="background-color: {{ $backgroundColor }};">
+                                        <div class="border rounded p-3" style="background-color: {{ $backgroundColor }};">
                                             <div class="d-flex align-items-center mb-2">
                                                 <div class="rounded-circle bg-primary d-flex align-items-center justify-content-center me-2"
-                                                    style="width: 32px; height: 32px;">
+                                                     style="width: 32px; height: 32px;">
                                                     <i class="fas fa-user text-white"></i>
                                                 </div>
                                                 <div>
                                                     <div class="fw-semibold small">사용자 이름</div>
-                                                    <div class="text-muted" style="font-size: 11px;">2분 전
-                                                    </div>
+                                                    <div class="text-muted" style="font-size: 11px;">2분 전</div>
                                                 </div>
                                             </div>
                                             <div class="bg-white rounded p-2 shadow-sm">
@@ -668,8 +556,7 @@
 
                             <!-- 버튼 영역 -->
                             <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top">
-                                <button type="button" class="btn btn-secondary"
-                                    wire:click="closeSettings">취소</button>
+                                <button type="button" class="btn btn-secondary" wire:click="closeSettings">취소</button>
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-1"></i> 저장
                                 </button>
@@ -682,7 +569,7 @@
     @endif
 
     <!-- 언어 설정 모달 -->
-    @if ($showLanguageModal)
+    @if($showLanguageModal)
         <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
             <div class="modal-dialog">
                 <div class="modal-content">
@@ -693,16 +580,15 @@
                         <button type="button" class="btn-close" wire:click="closeLanguageSettings"></button>
                     </div>
                     <div class="modal-body">
-                        @if ($editingParticipant)
+                        @if($editingParticipant)
                             <div class="mb-3 text-center">
                                 <div class="d-flex align-items-center justify-content-center mb-2">
                                     @if ($editingParticipant->avatar)
-                                        <img src="{{ $editingParticipant->avatar }}"
-                                            alt="{{ $editingParticipant->name }}" class="rounded-circle me-2"
-                                            style="width: 32px; height: 32px; object-fit: cover;">
+                                        <img src="{{ $editingParticipant->avatar }}" alt="{{ $editingParticipant->name }}"
+                                             class="rounded-circle me-2" style="width: 32px; height: 32px; object-fit: cover;">
                                     @else
                                         <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold me-2"
-                                            style="width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                             style="width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
                                             {{ mb_substr($editingParticipant->name, 0, 1) }}
                                         </div>
                                     @endif
@@ -717,10 +603,9 @@
                                 <div class="mb-3">
                                     <label class="form-label">언어 선택</label>
                                     <select class="form-select" wire:model="memberLanguage" style="font-size: 16px;">
-                                        @foreach ($availableLanguages as $lang)
+                                        @foreach($availableLanguages as $lang)
                                             <option value="{{ $lang['code'] }}">
-                                                {{ $lang['flag'] ?? '🌐' }} {{ $lang['native_name'] }}
-                                                ({{ $lang['name'] }})
+                                                {{ $lang['flag'] ?? '🌐' }}  {{ $lang['native_name'] }} ({{ $lang['name'] }})
                                             </option>
                                         @endforeach
                                     </select>
@@ -730,8 +615,7 @@
                                 </div>
 
                                 <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-secondary"
-                                        wire:click="closeLanguageSettings">취소</button>
+                                    <button type="button" class="btn btn-secondary" wire:click="closeLanguageSettings">취소</button>
                                     <button type="submit" class="btn btn-primary">저장</button>
                                 </div>
                             </form>
@@ -743,7 +627,7 @@
     @endif
 
     <!-- 참여자 정보 수정 모달 -->
-    @if ($showEditModal)
+    @if($showEditModal)
         <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
             <div class="modal-dialog">
                 <div class="modal-content">
@@ -755,17 +639,16 @@
                         <button type="button" class="btn-close" wire:click="closeEditModal"></button>
                     </div>
                     <div class="modal-body">
-                        @if ($editingParticipant)
+                        @if($editingParticipant)
                             <form wire:submit.prevent="updateParticipantInfo">
                                 <div class="mb-3 text-center">
                                     <div class="d-flex align-items-center justify-content-center mb-3">
                                         @if ($editingParticipant->avatar)
-                                            <img src="{{ $editingParticipant->avatar }}"
-                                                alt="{{ $editingParticipant->name }}" class="rounded-circle me-2"
-                                                style="width: 48px; height: 48px; object-fit: cover;">
+                                            <img src="{{ $editingParticipant->avatar }}" alt="{{ $editingParticipant->name }}"
+                                                 class="rounded-circle me-2" style="width: 48px; height: 48px; object-fit: cover;">
                                         @else
                                             <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold me-2"
-                                                style="width: 48px; height: 48px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                                 style="width: 48px; height: 48px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
                                                 {{ mb_substr($editingParticipant->name, 0, 1) }}
                                             </div>
                                         @endif
@@ -779,7 +662,7 @@
                                 <div class="mb-3">
                                     <label class="form-label">표시 이름</label>
                                     <input type="text" class="form-control" wire:model="editName"
-                                        placeholder="채팅방에서 표시될 이름">
+                                           placeholder="채팅방에서 표시될 이름">
                                     @error('editName')
                                         <div class="text-danger small">{{ $message }}</div>
                                     @enderror
@@ -788,10 +671,9 @@
                                 <div class="mb-3">
                                     <label class="form-label">언어</label>
                                     <select class="form-select" wire:model="editLanguage" style="font-size: 16px;">
-                                        @foreach ($availableLanguages as $lang)
+                                        @foreach($availableLanguages as $lang)
                                             <option value="{{ $lang['code'] }}">
-                                                {{ $lang['flag'] ?? '🌐' }} {{ $lang['native_name'] }}
-                                                ({{ $lang['name'] }})
+                                                {{ $lang['flag'] ?? '🌐' }}  {{ $lang['native_name'] }} ({{ $lang['name'] }})
                                             </option>
                                         @endforeach
                                     </select>
@@ -800,12 +682,12 @@
                                     @enderror
                                 </div>
 
-                                @if ($participant && in_array($participant->role, ['owner', 'admin']) && $editingParticipant->user_uuid !== $user->uuid)
+                                @if($participant && in_array($participant->role, ['owner', 'admin']) && $editingParticipant->user_uuid !== $user->uuid)
                                     <div class="mb-3">
                                         <label class="form-label">역할</label>
                                         <select class="form-select" wire:model="editRole">
                                             <option value="member">일반 멤버</option>
-                                            @if ($participant->role === 'owner')
+                                            @if($participant->role === 'owner')
                                                 <option value="admin">관리자</option>
                                             @endif
                                         </select>
@@ -816,8 +698,7 @@
                                 @endif
 
                                 <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-secondary"
-                                        wire:click="closeEditModal">취소</button>
+                                    <button type="button" class="btn btn-secondary" wire:click="closeEditModal">취소</button>
                                     <button type="submit" class="btn btn-primary">저장</button>
                                 </div>
                             </form>
@@ -829,7 +710,7 @@
     @endif
 
     <!-- 참여자 제거 확인 모달 -->
-    @if ($showRemoveModal)
+    @if($showRemoveModal)
         <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
             <div class="modal-dialog modal-sm">
                 <div class="modal-content">
@@ -840,16 +721,15 @@
                         <button type="button" class="btn-close" wire:click="closeRemoveModal"></button>
                     </div>
                     <div class="modal-body">
-                        @if ($removingParticipant)
+                        @if($removingParticipant)
                             <div class="text-center mb-3">
                                 <div class="d-flex align-items-center justify-content-center mb-2">
                                     @if ($removingParticipant->avatar)
-                                        <img src="{{ $removingParticipant->avatar }}"
-                                            alt="{{ $removingParticipant->name }}" class="rounded-circle me-2"
-                                            style="width: 32px; height: 32px; object-fit: cover;">
+                                        <img src="{{ $removingParticipant->avatar }}" alt="{{ $removingParticipant->name }}"
+                                             class="rounded-circle me-2" style="width: 32px; height: 32px; object-fit: cover;">
                                     @else
                                         <div class="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold me-2"
-                                            style="width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                             style="width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
                                             {{ mb_substr($removingParticipant->name, 0, 1) }}
                                         </div>
                                     @endif
@@ -868,4 +748,6 @@
             </div>
         </div>
     @endif
+
+</div>
 </div>

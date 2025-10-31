@@ -635,6 +635,15 @@
         document.addEventListener('DOMContentLoaded', function() {
             // WebSocket 연결 또는 polling 설정
             // TODO: 실시간 알림 구현
+
+            // updateRoomCounts 함수가 다른 곳에서 실행되고 있다면 안전하게 처리
+            if (typeof updateRoomCounts === 'function') {
+                try {
+                    updateRoomCounts();
+                } catch (error) {
+                    console.warn('updateRoomCounts function error (ignored):', error);
+                }
+            }
         });
     </script>
 @endsection

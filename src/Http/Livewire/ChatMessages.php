@@ -9,6 +9,10 @@ use Jiny\Chat\Models\ChatMessage;
 use Jiny\Chat\Models\ChatParticipant;
 use Jiny\Chat\Models\ChatFile;
 use Jiny\Chat\Models\ChatMessageFavourite;
+use Jiny\Chat\Models\ChatRoomMessage;
+use Jiny\Chat\Models\ChatRoomFile;
+use Jiny\Chat\Models\ChatRoomMessageFavourite;
+use Jiny\Chat\Models\ChatRoomMessageTranslation;
 use Jiny\Chat\Services\ChatService;
 use Jiny\Chat\Services\TranslationService;
 use Jiny\Chat\Models\ChatMessageTranslation;
@@ -22,20 +26,9 @@ class ChatMessages extends Component
     public $room;
     public $messages = [];
     public $user;
-    public $newMessage = '';
     public $messagesLoaded = false;
-    public $isTyping = false;
     public $typingUsers = [];
     public $backgroundColor = '#f8f9fa';
-    public $showBackgroundModal = false;
-
-    // 파일 업로드 관련
-    public $uploadedFiles = [];
-    public $showFileUpload = false;
-
-    // 답장 관련
-    public $replyingTo = null;
-    public $replyMessage = null;
 
     // 즐겨찾기 관련
     public $favouriteMessages = [];
@@ -44,6 +37,13 @@ class ChatMessages extends Component
     public $translatedMessages = [];
     public $showTranslations = true;
     public $currentUserLanguage = 'ko';
+
+    // 폴링 간격 관련
+    public $pollingInterval = 3; // 기본 3초
+    public $isActive = true; // 사용자 활성 상태
+    public $lastActivity; // 마지막 활동 시간
+    public $lastMessageTime; // 마지막 메시지 시간
+    public $hasNewMessages = false; // 새 메시지 존재 여부
 
     // 페이지네이션
     public $currentPage = 1;
@@ -60,6 +60,16 @@ class ChatMessages extends Component
         $this->translationService = $translationService;
     }
 
+    protected function ensureServicesLoaded()
+    {
+        if (!$this->chatService) {
+            $this->chatService = app(ChatService::class);
+        }
+        if (!$this->translationService) {
+            $this->translationService = app(TranslationService::class);
+        }
+    }
+
     public function mount($roomId)
     {
         $this->roomId = $roomId;
@@ -68,6 +78,11 @@ class ChatMessages extends Component
         $this->loadUserLanguage();
         $this->loadInitialMessages();
         $this->loadFavouriteMessages();
+
+        // 폴링 간격 초기화
+        $this->lastActivity = now();
+        $this->lastMessageTime = now();
+        $this->pollingInterval = 3; // 기본 3초
     }
 
     public function loadFavouriteMessages()
@@ -93,20 +108,123 @@ class ChatMessages extends Component
 
     public function loadUser()
     {
-        // JWT 인증 확인
-        $this->user = \JwtAuth::user(request());
+        // 사용자 조회 (JWT + Shard 파사드 기반)
+        $this->user = null;
+
+        // 1. JWT 인증으로 사용자 정보 확인
+        if (class_exists('\JwtAuth') && method_exists('\JwtAuth', 'user')) {
+            try {
+                $jwtUser = \JwtAuth::user(request());
+                if ($jwtUser && isset($jwtUser->uuid)) {
+                    // JWT 사용자 정보로 샤딩된 테이블에서 실제 사용자 조회
+                    $this->user = \Jiny\Auth\Facades\Shard::getUserByUuid($jwtUser->uuid);
+
+                    if ($this->user) {
+                        \Log::info('ChatMessages - JWT + Shard 사용자 로드 성공', [
+                            'uuid' => $this->user->uuid,
+                            'name' => $this->user->name,
+                            'email' => $this->user->email,
+                            'shard_table' => $this->user->getTable() ?? 'unknown'
+                        ]);
+                        return;
+                    } else {
+                        \Log::warning('ChatMessages - JWT 사용자를 샤딩 테이블에서 찾을 수 없음', [
+                            'jwt_uuid' => $jwtUser->uuid,
+                            'jwt_name' => $jwtUser->name ?? 'unknown',
+                            'jwt_email' => $jwtUser->email ?? 'unknown'
+                        ]);
+                    }
+                }
+            } catch (\Exception $e) {
+                \Log::warning('ChatMessages - JWT 인증 실패', [
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        // 2. 세션 인증 사용자 확인 (일반 users 테이블)
         if (!$this->user) {
-            // 임시 테스트 사용자
-            $this->user = (object) [
-                'uuid' => 'test-user-001',
-                'name' => 'Test User',
-                'email' => 'test@example.com'
-            ];
+            $sessionUser = auth()->user();
+            if ($sessionUser && isset($sessionUser->uuid)) {
+                // 세션 사용자도 샤딩된 테이블에서 조회 시도
+                $this->user = \Jiny\Auth\Facades\Shard::getUserByUuid($sessionUser->uuid);
+
+                if (!$this->user) {
+                    // 샤딩된 테이블에 없으면 세션 사용자 그대로 사용
+                    $this->user = $sessionUser;
+                }
+
+                \Log::info('ChatMessages - 세션 사용자 로드', [
+                    'uuid' => $this->user->uuid,
+                    'name' => $this->user->name,
+                    'email' => $this->user->email,
+                    'from_shard' => !($this->user === $sessionUser)
+                ]);
+            }
+        }
+
+        // 3. 채팅방 참여자 정보에서 사용자 조회
+        if (!$this->user && $this->roomId) {
+            $participant = ChatParticipant::where('room_id', $this->roomId)
+                ->where('status', 'active')
+                ->first();
+
+            if ($participant) {
+                // 참여자의 UUID로 샤딩된 테이블에서 실제 사용자 조회
+                $this->user = \Jiny\Auth\Facades\Shard::getUserByUuid($participant->user_uuid);
+
+                if (!$this->user) {
+                    // 샤딩된 테이블에 없으면 참여자 정보로 임시 객체 생성
+                    $this->user = (object) [
+                        'uuid' => $participant->user_uuid,
+                        'name' => $participant->name,
+                        'email' => $participant->email ?? 'unknown@example.com'
+                    ];
+                }
+
+                \Log::info('ChatMessages - 참여자 정보로 사용자 로드', [
+                    'uuid' => $this->user->uuid,
+                    'name' => $this->user->name,
+                    'participant_id' => $participant->id,
+                    'from_shard' => is_object($this->user) && method_exists($this->user, 'getTable')
+                ]);
+            }
+        }
+
+        // 4. 개발/테스트 환경 - 샤딩된 테이블에서 테스트 사용자 조회
+        if (!$this->user && app()->environment(['local', 'development'])) {
+            $testUuid = 'e04c8388-e7ed-438c-ba03-15fffd7a5312';
+            $this->user = \Jiny\Auth\Facades\Shard::getUserByUuid($testUuid);
+
+            if (!$this->user) {
+                // 샤딩된 테이블에도 없으면 일반 users 테이블에서 조회
+                $this->user = \App\Models\User::where('uuid', $testUuid)->first();
+            }
+
+            if ($this->user) {
+                \Log::info('ChatMessages - 개발 환경 테스트 사용자 사용', [
+                    'uuid' => $this->user->uuid,
+                    'name' => $this->user->name,
+                    'email' => $this->user->email,
+                    'table' => method_exists($this->user, 'getTable') ? $this->user->getTable() : 'users'
+                ]);
+            }
+        }
+
+        if (!$this->user) {
+            \Log::error('ChatMessages - 사용자를 찾을 수 없음', [
+                'room_id' => $this->roomId,
+                'jwt_available' => class_exists('\JwtAuth'),
+                'session_user' => auth()->check(),
+                'participant_count' => ChatParticipant::where('room_id', $this->roomId)->count()
+            ]);
+            throw new \Exception('인증된 사용자를 찾을 수 없습니다.');
         }
     }
 
     public function loadInitialMessages()
     {
+        $this->ensureServicesLoaded();
         $this->loadMessages();
         $this->messagesLoaded = true;
 
@@ -125,19 +243,38 @@ class ChatMessages extends Component
     {
         if (!$this->room) return;
 
-        $query = ChatMessage::where('room_id', $this->roomId)
-            ->orderBy('created_at', 'desc')
-            ->limit($this->perPage * $this->currentPage);
+        // 독립 데이터베이스 사용
+        if ($this->room->code) {
+            $query = ChatRoomMessage::forRoom($this->room->code)
+                ->where('is_deleted', false)
+                ->orderBy('created_at', 'desc')
+                ->limit($this->perPage * $this->currentPage);
 
-        $messages = $query->get()->reverse();
+            $messages = $query->get()->reverse();
 
-        $this->messages = $messages->map(function ($message) {
-            return $this->formatMessage($message);
-        })->toArray();
+            $this->messages = $messages->map(function ($message) {
+                return $this->formatMessage($message);
+            })->toArray();
 
-        // 더 로딩할 메시지가 있는지 확인
-        $totalMessages = ChatMessage::where('room_id', $this->roomId)->count();
-        $this->hasMoreMessages = count($this->messages) < $totalMessages;
+            // 더 로딩할 메시지가 있는지 확인
+            $totalMessages = ChatRoomMessage::forRoom($this->room->code)->where('is_deleted', false)->count();
+            $this->hasMoreMessages = count($this->messages) < $totalMessages;
+        } else {
+            // 기존 방식 (하위 호환성)
+            $query = ChatMessage::where('room_id', $this->roomId)
+                ->orderBy('created_at', 'desc')
+                ->limit($this->perPage * $this->currentPage);
+
+            $messages = $query->get()->reverse();
+
+            $this->messages = $messages->map(function ($message) {
+                return $this->formatMessage($message);
+            })->toArray();
+
+            // 더 로딩할 메시지가 있는지 확인
+            $totalMessages = ChatMessage::where('room_id', $this->roomId)->count();
+            $this->hasMoreMessages = count($this->messages) < $totalMessages;
+        }
     }
 
     public function loadMoreMessages()
@@ -173,80 +310,6 @@ class ChatMessages extends Component
         $this->loadingMore = false;
     }
 
-    public function sendMessage()
-    {
-        if (empty(trim($this->newMessage))) {
-            return;
-        }
-
-        try {
-            // Room UUID 가져오기
-            $room = ChatRoom::find($this->roomId);
-            if (!$room) {
-                throw new \Exception('채팅방을 찾을 수 없습니다.');
-            }
-
-            // 직접 데이터베이스에 메시지 저장
-            $messageData = [
-                'room_id' => $this->roomId,
-                'room_uuid' => $room->uuid,
-                'sender_uuid' => $this->user->uuid,
-                'content' => trim($this->newMessage),
-                'type' => 'text',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ];
-
-            // 답장 메시지인 경우 답장 정보 추가
-            if ($this->replyingTo) {
-                $messageData['reply_to_message_id'] = $this->replyingTo;
-            }
-
-            $message = ChatMessage::create($messageData);
-
-            // 메시지를 포맷팅하여 화면에 추가
-            $formattedMessage = $this->formatMessage($message);
-            $this->messages[] = $formattedMessage;
-
-            // SSE를 통한 실시간 알림 (캐시 기반 간단한 방식)
-            $this->broadcastNewMessage($formattedMessage);
-
-            // 레거시 Livewire 이벤트 (호환성 유지)
-            $this->dispatch('messageSent', [
-                'message' => $formattedMessage,
-                'room_id' => $this->roomId
-            ]);
-
-            $this->newMessage = '';
-
-            // 답장 상태 초기화
-            $this->replyingTo = null;
-            $this->replyMessage = null;
-
-            $this->dispatch('scroll-to-bottom');
-
-            \Log::info('메시지 전송 성공', [
-                'message_id' => $message->id,
-                'user_uuid' => $this->user->uuid,
-                'room_id' => $this->roomId,
-                'content' => $message->content,
-                'created_at' => $message->created_at->format('Y-m-d H:i:s'),
-                'formatted_time' => $this->formatMessage($message)['created_at']
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('메시지 전송 실패', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'user_uuid' => $this->user->uuid,
-                'room_id' => $this->roomId,
-                'message_content' => $this->newMessage
-            ]);
-
-            // 사용자에게 에러 알림
-            session()->flash('error', '메시지 전송에 실패했습니다: ' . $e->getMessage());
-        }
-    }
 
     public function formatMessage($message)
     {
@@ -278,6 +341,8 @@ class ChatMessages extends Component
             $timeDisplay = $createdAt->format('Y.n.j H:i');
         }
 
+        $isMine = $message->sender_uuid === $this->user->uuid;
+
         $formattedMessage = [
             'id' => $message->id,
             'content' => $message->content,
@@ -287,9 +352,19 @@ class ChatMessages extends Component
             'sender_avatar' => $participant ? $participant->avatar : null,
             'created_at' => $timeDisplay,
             'created_at_full' => $message->created_at->format('Y-m-d H:i:s'),
-            'is_mine' => $message->sender_uuid === $this->user->uuid,
+            'is_mine' => $isMine,
             'reply_to_message_id' => $message->reply_to_message_id,
         ];
+
+        // 소유권 판별 로깅
+        \Log::info('메시지 소유권 판별', [
+            'message_id' => $message->id,
+            'message_sender_uuid' => $message->sender_uuid,
+            'current_user_uuid' => $this->user->uuid,
+            'is_mine' => $isMine,
+            'sender_name' => $formattedMessage['sender_name']
+        ]);
+
 
         // 답장 메시지인 경우 원본 메시지 정보 추가
         if ($message->reply_to_message_id) {
@@ -310,41 +385,194 @@ class ChatMessages extends Component
 
         // 파일 메시지인 경우 파일 정보 추가
         if (in_array($message->type, ['image', 'document', 'video', 'audio'])) {
-            $chatFile = ChatFile::where('message_id', $message->id)
-                ->where('is_deleted', false)
-                ->first();
+            $chatFile = null;
+
+            // 독립 데이터베이스 사용 여부 확인
+            if ($this->room && $this->room->code) {
+                $chatFile = ChatRoomFile::forRoom($this->room->code)
+                    ->where('message_id', $message->id)
+                    ->first();
+            } else {
+                // 기존 방식 (하위 호환성)
+                $chatFile = ChatFile::where('message_id', $message->id)
+                    ->where('is_deleted', false)
+                    ->first();
+            }
 
             if ($chatFile) {
                 $formattedMessage['file'] = [
-                    'uuid' => $chatFile->uuid,
+                    'id' => $chatFile->id,
                     'original_name' => $chatFile->original_name,
-                    'file_size' => $chatFile->file_size_human,
+                    'file_size' => $this->formatFileSize($chatFile->file_size),
                     'file_type' => $chatFile->file_type,
-                    'icon_class' => $chatFile->icon_class,
-                    'download_url' => $chatFile->download_url,
+                    'icon_class' => $this->getFileIconClass($chatFile->file_type),
+                    'file_path' => $chatFile->file_path,
+                    'thumbnail_path' => $chatFile->thumbnail_path ?? null,
+                    'download_url' => asset('storage/' . $chatFile->file_path),
                 ];
+
+                // 이미지인 경우 미리보기 URL 추가
+                if ($chatFile->file_type === 'image') {
+                    $formattedMessage['file']['preview_url'] = asset('storage/' . $chatFile->file_path);
+                    if ($chatFile->thumbnail_path) {
+                        $formattedMessage['file']['thumbnail_url'] = asset('storage/' . $chatFile->thumbnail_path);
+                    }
+                }
             }
         }
 
         return $formattedMessage;
     }
 
+    /**
+     * 파일 크기를 읽기 쉬운 형태로 변환
+     */
+    private function formatFileSize($bytes)
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
+        }
+
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
+
+    /**
+     * 파일 타입에 따른 아이콘 클래스 반환
+     */
+    private function getFileIconClass($fileType)
+    {
+        switch ($fileType) {
+            case 'image':
+                return 'fas fa-image text-success';
+            case 'video':
+                return 'fas fa-video text-info';
+            case 'audio':
+                return 'fas fa-music text-warning';
+            case 'document':
+                return 'fas fa-file-alt text-primary';
+            default:
+                return 'fas fa-file text-muted';
+        }
+    }
+
+    /**
+     * 파일 삭제
+     */
+    public function deleteFile($fileId)
+    {
+        try {
+            if ($this->room && $this->room->code) {
+                $chatFile = ChatRoomFile::forRoom($this->room->code)->find($fileId);
+            } else {
+                $chatFile = ChatFile::find($fileId);
+            }
+
+            if ($chatFile && $chatFile->uploader_uuid === $this->user->uuid) {
+                $chatFile->deleteFile();
+
+                // 메시지 목록 새로고침
+                $this->refreshMessages();
+
+                session()->flash('success', '파일이 삭제되었습니다.');
+            } else {
+                session()->flash('error', '파일을 삭제할 권한이 없습니다.');
+            }
+        } catch (\Exception $e) {
+            \Log::error('파일 삭제 실패', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage()
+            ]);
+            session()->flash('error', '파일 삭제에 실패했습니다.');
+        }
+    }
+
     #[On('messageSent')]
     public function handleNewMessage($data)
     {
-        if (isset($data['message'])) {
-            $message = $data['message'];
-            if ($message['sender_uuid'] !== $this->user->uuid) {
-                $this->messages[] = $message;
-                $this->dispatch('scroll-to-bottom');
+        // ChatWrite 컴포넌트에서 전송된 메시지 이벤트 처리
+        if (isset($data['message_id'])) {
+            try {
+                // 실제 메시지 조회 및 포맷팅
+                if ($this->room && $this->room->code) {
+                    $message = ChatRoomMessage::forRoom($this->room->code)
+                        ->where('id', $data['message_id'])
+                        ->first();
+                } else {
+                    $message = ChatMessage::find($data['message_id']);
+                }
+
+                if ($message) {
+                    // 실시간 이벤트 처리 시 사용자 정보 강제 동기화
+                    \Log::info('실시간 메시지 이벤트 처리', [
+                        'message_id' => $message->id,
+                        'message_sender_uuid' => $message->sender_uuid,
+                        'current_user_uuid' => $this->user->uuid,
+                        'event_sender_uuid' => $data['sender_uuid'] ?? null
+                    ]);
+
+                    $formattedMessage = $this->formatMessage($message);
+                    $this->messages[] = $formattedMessage;
+                    $this->dispatch('scroll-to-bottom');
+
+                    // 새 메시지 감지 - 폴링 간격 단축
+                    $this->onNewMessage();
+
+                    // 전역 이벤트: ChatHeader 컴포넌트에 메시지 수 업데이트 알림
+                    $this->dispatch('chat-message-count-updated', [
+                        'roomId' => $this->roomId,
+                        'count' => count($this->messages)
+                    ])->to('jiny-chat::chat-header');
+                }
+            } catch (\Exception $e) {
+                \Log::error('메시지 수신 처리 실패', [
+                    'error' => $e->getMessage(),
+                    'data' => $data
+                ]);
             }
         }
     }
 
-    #[On('backgroundColorChanged')]
+    #[On('fileUploaded')]
+    public function handleFileUpload($data)
+    {
+        // ChatWrite 컴포넌트에서 전송된 파일 업로드 이벤트 처리
+        if (isset($data['message_id'])) {
+            try {
+                // 실제 메시지 조회 및 포맷팅
+                if ($this->room && $this->room->code) {
+                    $message = ChatRoomMessage::forRoom($this->room->code)
+                        ->where('id', $data['message_id'])
+                        ->first();
+                } else {
+                    $message = ChatMessage::find($data['message_id']);
+                }
+
+                if ($message) {
+                    $formattedMessage = $this->formatMessage($message);
+                    $this->messages[] = $formattedMessage;
+                    $this->dispatch('scroll-to-bottom');
+
+                    // 새 메시지 감지 - 폴링 간격 단축
+                    $this->onNewMessage();
+                }
+            } catch (\Exception $e) {
+                \Log::error('파일 업로드 수신 처리 실패', [
+                    'error' => $e->getMessage(),
+                    'data' => $data
+                ]);
+            }
+        }
+    }
+
+    #[On('chat-background-color-changed')]
     public function handleBackgroundColorChanged($data)
     {
-        $this->backgroundColor = $data['color'];
+        // 같은 룸의 이벤트만 처리
+        if (($data['roomId'] ?? null) == $this->roomId) {
+            $this->backgroundColor = $data['color'] ?? '#f8f9fa';
+        }
     }
 
     #[On('participantListUpdated')]
@@ -354,111 +582,43 @@ class ChatMessages extends Component
         // 필요에 따라 메시지 목록에 참여/나가기 알림 추가
     }
 
-    /**
-     * SSE를 통해 새 메시지 수신 (JavaScript에서 호출)
-     */
-    public function handleSseMessage($messageData)
+    #[On('chat-translations-toggled')]
+    public function handleTranslationsToggled($data)
     {
-        if (!$this->messagesLoaded) return;
+        // 같은 룸의 이벤트만 처리
+        if (($data['roomId'] ?? null) == $this->roomId) {
+            $this->showTranslations = $data['showTranslations'] ?? true;
 
-        // 이미 존재하는 메시지인지 확인
-        $existingMessage = collect($this->messages)->firstWhere('id', $messageData['id']);
-        if ($existingMessage) {
-            return;
-        }
-
-        // 자신의 메시지가 아닌 경우에만 추가
-        if ($messageData['sender_uuid'] !== $this->user->uuid) {
-            $this->messages[] = $messageData;
-
-            // 새 메시지 자동 번역
             if ($this->showTranslations) {
-                $this->translateMessage($messageData['id']);
+                $this->translateAllMessages();
+            } else {
+                // 번역 숨기기 - 번역 데이터 제거
+                $this->translatedMessages = [];
             }
-
-            $this->dispatch('scroll-to-bottom');
         }
     }
 
-    /**
-     * SSE 연결 상태 확인용 메서드
-     */
-    public function getSseEndpoint()
+    #[On('chat-polling-interval-changed')]
+    public function handlePollingIntervalChanged($data)
     {
-        return route('chat.sse.stream', ['roomId' => $this->roomId]);
-    }
-
-    /**
-     * 마지막 메시지 ID 반환 (SSE 연결 시 사용)
-     */
-    public function getLastMessageId()
-    {
-        return collect($this->messages)->max('id') ?? 0;
-    }
-
-    /**
-     * SSE를 통한 새 메시지 브로드캐스팅
-     */
-    private function broadcastNewMessage($formattedMessage)
-    {
-        try {
-            // 캐시를 사용한 간단한 브로드캐스팅
-            // SSE 스트림에서 이 데이터를 확인하여 실시간 전송
-            $broadcastKey = "chat_broadcast:{$this->roomId}";
-            $broadcasts = \Cache::get($broadcastKey, []);
-
-            $broadcasts[] = [
-                'type' => 'new_message',
-                'message' => $formattedMessage,
-                'room_id' => $this->roomId,
-                'timestamp' => now()->toISOString(),
-                'sender_uuid' => $this->user->uuid
-            ];
-
-            // 최근 10개 브로드캐스트만 유지
-            if (count($broadcasts) > 10) {
-                $broadcasts = array_slice($broadcasts, -10);
-            }
-
-            \Cache::put($broadcastKey, $broadcasts, 60); // 1분 TTL
-
-            \Log::info('SSE 브로드캐스트 전송', [
-                'room_id' => $this->roomId,
-                'message_id' => $formattedMessage['id'],
-                'sender_uuid' => $this->user->uuid,
-                'broadcast_count' => count($broadcasts)
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('SSE 브로드캐스트 실패', [
-                'room_id' => $this->roomId,
-                'error' => $e->getMessage(),
-                'message_id' => $formattedMessage['id'] ?? 'unknown'
-            ]);
+        // 같은 룸의 이벤트만 처리
+        if (($data['roomId'] ?? null) == $this->roomId) {
+            $this->pollingInterval = $data['pollingInterval'] ?? 3;
+            $this->updateActivity();
         }
     }
 
-    public function startTyping()
+
+    #[On('chat-load-more-messages-requested')]
+    public function handleLoadMoreMessagesRequested($data)
     {
-        $this->isTyping = true;
-        // SSE를 통해 타이핑 상태 전송
-        $this->dispatch('send-typing-status', ['is_typing' => true]);
+        // 같은 룸의 이벤트만 처리
+        if (($data['roomId'] ?? null) == $this->roomId) {
+            $this->loadMoreMessages();
+        }
     }
 
-    public function stopTyping()
-    {
-        $this->isTyping = false;
-        // SSE를 통해 타이핑 상태 전송
-        $this->dispatch('send-typing-status', ['is_typing' => false]);
-    }
 
-    /**
-     * SSE를 통해 받은 타이핑 상태 업데이트
-     */
-    public function updateTypingUsers($typingUsers)
-    {
-        $this->typingUsers = $typingUsers;
-    }
 
     #[On('userTyping')]
     public function handleUserTyping($data)
@@ -474,198 +634,8 @@ class ChatMessages extends Component
         unset($this->typingUsers[$data['user_uuid']]);
     }
 
-    public function showBackgroundSettings()
-    {
-        $this->showBackgroundModal = true;
-    }
-
-    public function closeBackgroundSettings()
-    {
-        $this->showBackgroundModal = false;
-    }
-
-    public function setBackgroundColor($color)
-    {
-        $this->backgroundColor = $color;
-        $this->updateBackgroundColor();
-    }
-
-    public function updateBackgroundColor()
-    {
-        try {
-            if ($this->room) {
-                $this->room->update(['background_color' => $this->backgroundColor]);
-
-                // 다른 컴포넌트에 배경색 변경 알림
-                $this->dispatch('backgroundColorChanged', ['color' => $this->backgroundColor]);
-            }
-
-            $this->showBackgroundModal = false;
-        } catch (\Exception $e) {
-            \Log::error('배경색 변경 실패', [
-                'error' => $e->getMessage(),
-                'room_id' => $this->roomId,
-                'background_color' => $this->backgroundColor
-            ]);
-        }
-    }
 
 
-    public function uploadFiles()
-    {
-        $this->validate([
-            'uploadedFiles.*' => 'required|file|max:10240', // 10MB 제한
-        ]);
-
-        foreach ($this->uploadedFiles as $file) {
-            $this->processFileUpload($file);
-        }
-
-        $this->uploadedFiles = [];
-        $this->showFileUpload = false;
-
-        // 파일 업로드 후 스크롤 하단 이동
-        $this->dispatch('scroll-to-bottom');
-    }
-
-    public function processFileUpload($file)
-    {
-        try {
-            // Room UUID 가져오기
-            $room = ChatRoom::find($this->roomId);
-            if (!$room) {
-                throw new \Exception('채팅방을 찾을 수 없습니다.');
-            }
-
-            // 파일 정보 추출
-            $originalName = $file->getClientOriginalName();
-            $mimeType = $file->getMimeType();
-            $fileSize = $file->getSize();
-            $fileType = ChatFile::determineFileType($mimeType);
-
-            // 계층화된 저장 경로 생성
-            $storagePath = ChatFile::generateStoragePath($room->uuid);
-            $fileName = time() . '_' . \Str::random(10) . '.' . $file->getClientOriginalExtension();
-            $fullPath = "chat_files/{$storagePath}/{$fileName}";
-
-            // 파일 저장
-            $file->storeAs(dirname($fullPath), basename($fullPath), 'public');
-
-            // 메시지 생성 (파일 타입)
-            $message = ChatMessage::create([
-                'room_id' => $this->roomId,
-                'room_uuid' => $room->uuid,
-                'sender_uuid' => $this->user->uuid,
-                'content' => $originalName, // 파일명을 content로
-                'type' => $fileType,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-
-            // 파일 정보 저장
-            $chatFile = ChatFile::create([
-                'message_id' => $message->id,
-                'room_uuid' => $room->uuid,
-                'uploader_uuid' => $this->user->uuid,
-                'original_name' => $originalName,
-                'file_name' => $fileName,
-                'file_path' => $fullPath,
-                'file_type' => $fileType,
-                'mime_type' => $mimeType,
-                'file_size' => $fileSize,
-                'storage_path' => $storagePath,
-                'metadata' => [
-                    'upload_ip' => request()->ip(),
-                    'user_agent' => request()->userAgent(),
-                ],
-            ]);
-
-            // 메시지를 포맷팅하여 화면에 추가
-            $formattedMessage = $this->formatMessage($message);
-            $formattedMessage['file'] = [
-                'uuid' => $chatFile->uuid,
-                'original_name' => $originalName,
-                'file_size' => $chatFile->file_size_human,
-                'file_type' => $fileType,
-                'icon_class' => $chatFile->icon_class,
-                'download_url' => $chatFile->download_url,
-            ];
-
-            $this->messages[] = $formattedMessage;
-
-            // 다른 컴포넌트에 메시지 전송 알림
-            $this->dispatch('messageSent', [
-                'message' => $formattedMessage,
-                'room_id' => $this->roomId
-            ]);
-
-            $this->dispatch('scroll-to-bottom');
-
-            \Log::info('파일 업로드 성공', [
-                'file_id' => $chatFile->uuid,
-                'message_id' => $message->id,
-                'original_name' => $originalName,
-                'file_size' => $fileSize,
-                'file_type' => $fileType,
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('파일 업로드 실패', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'file_name' => $file->getClientOriginalName() ?? 'unknown',
-            ]);
-
-            session()->flash('error', '파일 업로드에 실패했습니다: ' . $e->getMessage());
-        }
-    }
-
-    public function deleteFile($fileUuid)
-    {
-        try {
-            $chatFile = ChatFile::where('uuid', $fileUuid)
-                ->where('uploader_uuid', $this->user->uuid)
-                ->where('is_deleted', false)
-                ->first();
-
-            if (!$chatFile) {
-                throw new \Exception('파일을 찾을 수 없거나 삭제 권한이 없습니다.');
-            }
-
-            // 실제 파일 삭제
-            if (Storage::disk('public')->exists($chatFile->file_path)) {
-                Storage::disk('public')->delete($chatFile->file_path);
-            }
-
-            // 데이터베이스에서 삭제 표시
-            $chatFile->update([
-                'is_deleted' => true,
-                'deleted_at' => now(),
-            ]);
-
-            // 메시지 다시 로드
-            $this->loadInitialMessages();
-
-            \Log::info('파일 삭제 성공', [
-                'file_id' => $fileUuid,
-                'user_uuid' => $this->user->uuid,
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('파일 삭제 실패', [
-                'error' => $e->getMessage(),
-                'file_uuid' => $fileUuid,
-                'user_uuid' => $this->user->uuid,
-            ]);
-
-            session()->flash('error', '파일 삭제에 실패했습니다: ' . $e->getMessage());
-        }
-    }
-
-    public function toggleFileUpload()
-    {
-        $this->showFileUpload = !$this->showFileUpload;
-    }
 
     // 메시지 상호작용 메서드들
     public function copyMessage($messageId)
@@ -689,15 +659,7 @@ class ChatMessages extends Component
 
                 $senderName = $participant ? $participant->name : $message->sender_uuid;
 
-                $this->replyingTo = $messageId;
-                $this->replyMessage = [
-                    'id' => $message->id,
-                    'content' => $message->content,
-                    'sender_name' => $senderName,
-                    'created_at' => $message->created_at->format('H:i')
-                ];
-
-                // JavaScript 이벤트 발생
+                // ChatWrite 컴포넌트로 답장 정보 전송
                 $this->dispatch('replyToMessage', [
                     'messageId' => $messageId,
                     'content' => $message->content,
@@ -710,12 +672,6 @@ class ChatMessages extends Component
         } catch (\Exception $e) {
             \Log::error('답장 설정 실패', ['error' => $e->getMessage()]);
         }
-    }
-
-    public function cancelReply()
-    {
-        $this->replyingTo = null;
-        $this->replyMessage = null;
     }
 
     public function forwardMessage($messageId)
@@ -944,6 +900,14 @@ class ChatMessages extends Component
     public function translateAllMessages()
     {
         try {
+            $this->ensureServicesLoaded();
+
+            // 번역 서비스가 없으면 스킵
+            if (!$this->translationService) {
+                \Log::warning('번역 서비스를 사용할 수 없습니다');
+                return;
+            }
+
             // 번역이 필요한 메시지 필터링 (자신의 메시지 제외)
             $messagesToTranslate = [];
             foreach ($this->messages as $message) {
@@ -1006,6 +970,12 @@ class ChatMessages extends Component
         if ($this->showTranslations) {
             $this->translateAllMessages();
         }
+
+        // 전역 이벤트: ChatHeader 컴포넌트에 번역 상태 업데이트 알림
+        $this->dispatch('chat-translations-state-updated', [
+            'roomId' => $this->roomId,
+            'showTranslations' => $this->showTranslations
+        ]);
     }
 
     /**
@@ -1049,6 +1019,154 @@ class ChatMessages extends Component
     public function isMessageTranslated($messageId)
     {
         return isset($this->translatedMessages[$messageId]);
+    }
+
+    /**
+     * Polling을 위한 메시지 새로고침 메서드
+     */
+    public function refreshMessages()
+    {
+        if (!$this->messagesLoaded) {
+            return;
+        }
+
+        try {
+            $currentMessageCount = count($this->messages);
+            $lastMessageId = collect($this->messages)->max('id') ?? 0;
+
+            // 새 메시지 확인
+            if ($this->room && $this->room->code) {
+                $newMessages = ChatRoomMessage::forRoom($this->room->code)
+                    ->where('id', '>', $lastMessageId)
+                    ->where('is_deleted', false)
+                    ->orderBy('created_at', 'asc')
+                    ->get();
+
+                if ($newMessages->count() > 0) {
+                    foreach ($newMessages as $message) {
+                        $formattedMessage = $this->formatMessage($message);
+                        $this->messages[] = $formattedMessage;
+
+                        // 새 메시지 자동 번역
+                        if ($this->showTranslations && $message->sender_uuid !== $this->user->uuid) {
+                            $this->translateMessage($message->id);
+                        }
+                    }
+
+                    // 새 메시지 감지 - 폴링 간격 단축
+                    $this->onNewMessage();
+
+                    // 스크롤을 하단으로 이동
+                    $this->dispatch('scroll-to-bottom');
+
+                    \Log::info('Polling: 새 메시지 로드됨', [
+                        'room_id' => $this->roomId,
+                        'new_messages_count' => $newMessages->count(),
+                        'total_messages' => count($this->messages),
+                        'polling_interval' => $this->pollingInterval
+                    ]);
+                } else {
+                    // 새 메시지가 없으면 폴링 간격 조정
+                    $this->adjustPollingInterval();
+                }
+            } else {
+                // 기존 방식 (하위 호환성)
+                $newMessages = ChatMessage::where('room_id', $this->roomId)
+                    ->where('id', '>', $lastMessageId)
+                    ->orderBy('created_at', 'asc')
+                    ->get();
+
+                if ($newMessages->count() > 0) {
+                    foreach ($newMessages as $message) {
+                        $formattedMessage = $this->formatMessage($message);
+                        $this->messages[] = $formattedMessage;
+                    }
+
+                    $this->dispatch('scroll-to-bottom');
+                }
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('Polling 메시지 새로고침 실패', [
+                'room_id' => $this->roomId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 사용자 활동 감지 및 폴링 간격 조정
+     */
+    public function updateActivity()
+    {
+        $this->lastActivity = now();
+        $this->isActive = true;
+        $this->adjustPollingInterval();
+    }
+
+    /**
+     * 단계별 폴링 간격 조정 (메시지 활동에 따라)
+     */
+    public function adjustPollingInterval()
+    {
+        if (!$this->lastMessageTime) {
+            $this->pollingInterval = 3;
+            return;
+        }
+
+        $timeSinceLastMessage = now()->diffInSeconds($this->lastMessageTime);
+
+        if ($this->hasNewMessages) {
+            // 새 메시지가 감지되면 즉시 빠른 폴링
+            $this->pollingInterval = 0.5; // 500ms
+            \Log::info('폴링 간격 조정: 새 메시지 감지 - 0.5초');
+        } elseif ($timeSinceLastMessage <= 1) {
+            // 1초 이내: 빠른 폴링 (1초)
+            $this->pollingInterval = 1;
+            \Log::info('폴링 간격 조정: 1초 이내 - 1초');
+        } elseif ($timeSinceLastMessage <= 3) {
+            // 3초 이내: 보통 폴링 (3초)
+            $this->pollingInterval = 3;
+            \Log::info('폴링 간격 조정: 3초 이내 - 3초');
+        } elseif ($timeSinceLastMessage <= 10) {
+            // 10초 이내: 느린 폴링 (5초)
+            $this->pollingInterval = 5;
+        } elseif ($timeSinceLastMessage <= 30) {
+            // 30초 이내: 더 느린 폴링 (10초)
+            $this->pollingInterval = 10;
+        } else {
+            // 30초 이상: 매우 느린 폴링 (15초)
+            $this->pollingInterval = 15;
+        }
+
+        // 새 메시지 플래그 리셋
+        $this->hasNewMessages = false;
+    }
+
+    /**
+     * 폴링 간격 설정 (수동)
+     */
+    public function setPollingInterval($seconds)
+    {
+        $this->pollingInterval = max(1, min(60, $seconds)); // 1-60초 범위
+        $this->updateActivity();
+    }
+
+    /**
+     * 새 메시지 감지 시 폴링 간격 단축
+     */
+    public function onNewMessage()
+    {
+        $this->hasNewMessages = true;
+        $this->lastMessageTime = now();
+        $this->adjustPollingInterval(); // 0.5초로 단축
+        $this->updateActivity();
+
+        // 전역 이벤트: ChatHeader 컴포넌트에 폴링 간격 업데이트 알림
+        $this->dispatch('chat-polling-interval-updated', [
+            'roomId' => $this->roomId,
+            'interval' => $this->pollingInterval
+        ]);
     }
 
     public function render()

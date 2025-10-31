@@ -127,25 +127,6 @@ class ChatRoom extends Model
         'expires_at',
     ];
 
-    /**
-     * 부팅 시 자동으로 UUID 생성
-     */
-    protected static function boot()
-    {
-        parent::boot();
-
-        static::creating(function ($model) {
-            if (empty($model->uuid)) {
-                $model->uuid = (string) Str::uuid();
-            }
-            if (empty($model->code)) {
-                $model->code = $model->generateUniqueCode();
-            }
-            if (empty($model->invite_code)) {
-                $model->invite_code = $model->generateInviteCode();
-            }
-        });
-    }
 
     /**
      * 참여자 관계
@@ -164,18 +145,24 @@ class ChatRoom extends Model
     }
 
     /**
-     * 메시지 관계
+     * 메시지 관계 (독립 데이터베이스 사용)
      */
     public function messages()
     {
+        if ($this->code) {
+            return ChatRoomMessage::forRoom($this->code);
+        }
         return $this->hasMany(ChatMessage::class, 'room_id');
     }
 
     /**
-     * 최근 메시지 관계
+     * 최근 메시지 관계 (독립 데이터베이스 사용)
      */
     public function latestMessage()
     {
+        if ($this->code) {
+            return ChatRoomMessage::forRoom($this->code)->latest()->first();
+        }
         return $this->hasOne(ChatMessage::class, 'room_id')->latest();
     }
 
@@ -193,7 +180,7 @@ class ChatRoom extends Model
     }
 
     /**
-     * 새 채팅방 생성
+     * 새 채팅방 생성 (독립 데이터베이스 포함)
      */
     public static function createRoom(array $data)
     {
@@ -220,6 +207,21 @@ class ChatRoom extends Model
         ], $data);
 
         $room = static::create($data);
+
+        // 독립적인 SQLite 데이터베이스 생성 (새로운 경로 구조 적용)
+        if ($room->code && $room->id) {
+            try {
+                \Jiny\Chat\Helpers\ChatDatabaseManager::createChatDatabase(
+                    $room->code,
+                    $room->id,
+                    $room->created_at
+                );
+            } catch (\Exception $e) {
+                // 데이터베이스 생성 실패 시 방 삭제
+                $room->delete();
+                throw new \Exception('Failed to create chat database: ' . $e->getMessage());
+            }
+        }
 
         // 방장을 참여자로 추가
         if (isset($data['owner_uuid'])) {
@@ -455,5 +457,137 @@ class ChatRoom extends Model
     public function scopeOwnedBy($query, $userUuid)
     {
         return $query->where('owner_uuid', $userUuid);
+    }
+
+    /**
+     * 독립 데이터베이스 메시지 전송
+     */
+    public function sendMessage($senderUuid, array $messageData)
+    {
+        if (!$this->code) {
+            throw new \Exception('Room code is required for independent database');
+        }
+
+        return ChatRoomMessage::createMessage($this->code, $senderUuid, $messageData);
+    }
+
+    /**
+     * 독립 데이터베이스 파일 업로드
+     */
+    public function uploadFile($uploaderUuid, $file, $messageId = null)
+    {
+        if (!$this->code) {
+            throw new \Exception('Room code is required for independent database');
+        }
+
+        return ChatRoomFile::uploadFile($this->code, $file, $uploaderUuid, $messageId);
+    }
+
+    /**
+     * 독립 데이터베이스 메시지 번역
+     */
+    public function translateMessage($messageId, $languageCode, $translatedContent, $options = [])
+    {
+        if (!$this->code) {
+            throw new \Exception('Room code is required for independent database');
+        }
+
+        return ChatRoomMessageTranslation::translateMessage($this->code, $messageId, $languageCode, $translatedContent, $options);
+    }
+
+    /**
+     * 독립 데이터베이스 통계 조회
+     */
+    public function getStats($days = 7)
+    {
+        if (!$this->code) {
+            return null;
+        }
+
+        return [
+            'peak_hours' => ChatRoomStats::getPeakHours($this->code, $days),
+            'active_users' => ChatRoomStats::getActiveUsers($this->code, $days),
+            'monthly_summary' => ChatRoomStats::getMonthlySummary($this->code, now()->year, now()->month),
+        ];
+    }
+
+    /**
+     * 독립 데이터베이스 크기 조회
+     */
+    public function getDatabaseSize()
+    {
+        if (!$this->code) {
+            return 0;
+        }
+
+        return \Jiny\Chat\Helpers\ChatDatabaseManager::getChatDatabaseSize(
+            $this->code,
+            $this->id,
+            $this->created_at
+        );
+    }
+
+    /**
+     * 독립 데이터베이스 백업
+     */
+    public function backupDatabase($backupPath = null)
+    {
+        if (!$this->code) {
+            return false;
+        }
+
+        return \Jiny\Chat\Helpers\ChatDatabaseManager::backupChatDatabase(
+            $this->code,
+            $this->id,
+            $this->created_at,
+            $backupPath
+        );
+    }
+
+    /**
+     * 독립 데이터베이스 최적화
+     */
+    public function optimizeDatabase()
+    {
+        if (!$this->code) {
+            return false;
+        }
+
+        return \Jiny\Chat\Helpers\ChatDatabaseManager::optimizeChatDatabase(
+            $this->code,
+            $this->id,
+            $this->created_at
+        );
+    }
+
+    /**
+     * 채팅방 삭제 시 독립 데이터베이스도 삭제
+     */
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($model) {
+            if (empty($model->uuid)) {
+                $model->uuid = (string) Str::uuid();
+            }
+            if (empty($model->code)) {
+                $model->code = $model->generateUniqueCode();
+            }
+            if (empty($model->invite_code)) {
+                $model->invite_code = $model->generateInviteCode();
+            }
+        });
+
+        static::deleting(function ($model) {
+            // 독립 데이터베이스 삭제
+            if ($model->code) {
+                \Jiny\Chat\Helpers\ChatDatabaseManager::deleteChatDatabase(
+                    $model->code,
+                    $model->id,
+                    $model->created_at
+                );
+            }
+        });
     }
 }

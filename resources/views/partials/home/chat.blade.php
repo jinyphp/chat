@@ -134,7 +134,10 @@ function loadMyRooms() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                document.getElementById('myRoomsCount').textContent = data.rooms.length;
+                const countElement = document.getElementById('myRoomsCount');
+                if (countElement) {
+                    countElement.textContent = data.rooms.length;
+                }
                 // 모달로 채팅방 목록 표시
                 showMyRoomsModal(data.rooms, '내 참여 채팅방');
             }
@@ -148,7 +151,10 @@ function loadMyOwnedRooms() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                document.getElementById('myOwnedRoomsCount').textContent = data.rooms.length;
+                const countElement = document.getElementById('myOwnedRoomsCount');
+                if (countElement) {
+                    countElement.textContent = data.rooms.length;
+                }
                 // 모달로 내가 만든 채팅방 목록 표시 (관리 기능 포함)
                 showMyOwnedRoomsModal(data.rooms);
             }
@@ -328,40 +334,129 @@ function generateInviteLink(roomId) {
 
 // 페이지 로드 시 초기화
 document.addEventListener('DOMContentLoaded', function() {
-    // 초기 로드
-    updateRoomCounts();
+    // 인증 상태 확인 후 초기 로드
+    checkAuthAndUpdateCounts();
 
-    // 내 채팅방 수 업데이트 (주기적)
-    setInterval(updateRoomCounts, 30000); // 30초마다 업데이트
+    // 내 채팅방 수 업데이트 (주기적) - 인증된 경우에만
+    setInterval(checkAuthAndUpdateCounts, 30000); // 30초마다 업데이트
 
     // 온라인 사용자 수 업데이트 (시뮬레이션)
     setInterval(function() {
         const count = Math.floor(Math.random() * 10) + 1;
-        document.getElementById('onlineUsersCount').textContent = count;
+        const countElement = document.getElementById('onlineUsersCount');
+        if (countElement) {
+            countElement.textContent = count;
+        }
     }, 10000); // 10초마다 업데이트
 });
 
+// 인증 상태 확인 및 조건부 업데이트 함수
+function checkAuthAndUpdateCounts() {
+    // 현재 페이지가 채팅 관련 페이지가 아니면 실행하지 않음
+    if (!window.location.pathname.includes('/chat')) {
+        return;
+    }
+
+    // 간단한 인증 상태 확인 (사용자 정보가 있는지 확인)
+    const hasUserInfo = document.querySelector('meta[name="user-uuid"]') ||
+                       document.querySelector('[data-user-uuid]') ||
+                       window.userUuid; // 전역 변수가 있다면
+
+    if (hasUserInfo) {
+        updateRoomCounts();
+    } else {
+        console.info('User not authenticated, skipping room counts update');
+    }
+}
+
 // 채팅방 수 업데이트 함수
 function updateRoomCounts() {
+    // 현재 페이지가 채팅 관련 페이지가 아니면 실행하지 않음
+    if (!window.location.pathname.includes('/chat')) {
+        return;
+    }
+
+    // 임시로 비활성화 - 인증 문제 해결 후 활성화 예정
+    console.info('updateRoomCounts: 임시 비활성화됨 (인증 이슈)');
+    return;
+
     // 내 참여 채팅방 수 업데이트
-    fetch('/api/chat/rooms?type=participant&count_only=true')
-        .then(response => response.json())
+    fetch('/home/chat/api/rooms?type=participant&count_only=true', {
+        method: 'GET',
+        headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+        }
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                throw new Error('Response is not JSON');
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
-                document.getElementById('myRoomsCount').textContent = data.count || 0;
+                const countElement = document.getElementById('myRoomsCount');
+                if (countElement) {
+                    countElement.textContent = data.count || 0;
+                }
+            } else {
+                console.warn('API returned success: false for participant rooms');
             }
         })
-        .catch(error => console.error('Error updating participant rooms count:', error));
+        .catch(error => {
+            console.error('Error updating participant rooms count:', error);
+            // 401 오류인 경우 로그인이 필요함을 표시
+            if (error.message.includes('401')) {
+                console.info('User not authenticated for participant rooms count');
+            }
+            // 사용자에게 표시하지 않고 조용히 실패
+        });
 
     // 내가 만든 채팅방 수 업데이트
-    fetch('/api/chat/rooms?type=owner&count_only=true')
-        .then(response => response.json())
+    fetch('/home/chat/api/rooms?type=owner&count_only=true', {
+        method: 'GET',
+        headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+        }
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                throw new Error('Response is not JSON');
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
-                document.getElementById('myOwnedRoomsCount').textContent = data.count || 0;
+                const countElement = document.getElementById('myOwnedRoomsCount');
+                if (countElement) {
+                    countElement.textContent = data.count || 0;
+                }
+            } else {
+                console.warn('API returned success: false for owned rooms');
             }
         })
-        .catch(error => console.error('Error updating owned rooms count:', error));
+        .catch(error => {
+            console.error('Error updating owned rooms count:', error);
+            // 401 오류인 경우 로그인이 필요함을 표시
+            if (error.message.includes('401')) {
+                console.info('User not authenticated for owned rooms count');
+            }
+            // 사용자에게 표시하지 않고 조용히 실패
+        });
 }
 </script>
 

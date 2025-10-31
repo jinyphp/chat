@@ -18,6 +18,11 @@ class ChatServiceProvider extends ServiceProvider
         $this->loadRoutesFrom(__DIR__.'/../routes/home.php');
         $this->loadRoutesFrom(__DIR__.'/../routes/admin.php');
 
+        // Load test routes (개발 환경에서만)
+        if (app()->environment(['local', 'testing'])) {
+            $this->loadRoutesFrom(__DIR__.'/../routes/test.php');
+        }
+
         // Load migrations
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
 
@@ -72,10 +77,12 @@ class ChatServiceProvider extends ServiceProvider
      */
     protected function registerLivewireComponents(): void
     {
-        Livewire::component('chat-participants', \Jiny\Chat\Http\Livewire\ChatParticipants::class);
-        Livewire::component('chat-messages', \Jiny\Chat\Http\Livewire\ChatMessages::class);
-        Livewire::component('chat-message', \Jiny\Chat\Http\Livewire\ChatMessage::class);
-        Livewire::component('chat-list', \Jiny\Chat\Http\Livewire\ChatList::class);
+        Livewire::component('jiny-chat::chat-participants', \Jiny\Chat\Http\Livewire\ChatParticipants::class);
+        Livewire::component('jiny-chat::chat-header', \Jiny\Chat\Http\Livewire\ChatHeader::class);
+        Livewire::component('jiny-chat::chat-messages', \Jiny\Chat\Http\Livewire\ChatMessages::class);
+        Livewire::component('jiny-chat::chat-write', \Jiny\Chat\Http\Livewire\ChatWrite::class);
+        Livewire::component('jiny-chat::chat-message', \Jiny\Chat\Http\Livewire\ChatMessage::class);
+        Livewire::component('jiny-chat::chat-list', \Jiny\Chat\Http\Livewire\ChatList::class);
     }
 
     /**
