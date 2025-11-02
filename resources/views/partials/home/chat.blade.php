@@ -11,5 +11,14 @@
             </a>
         </li>
 
+        <!-- 초대링크 관리 -->
+        <li class="nav-item">
+            <a class="nav-link {{ request()->routeIs('home.chat.invite.*') ? 'active' : '' }}"
+               href="{{ route('home.chat.invite.index') }}">
+                <i class="fas fa-link nav-icon"></i>
+                초대링크
+            </a>
+        </li>
+
     </ul>
 </div>

@@ -8,6 +8,9 @@ use Jiny\Chat\Http\Controllers\Home\Room\ShowController;
 use Jiny\Chat\Http\Controllers\Home\Room\MessageController;
 use Jiny\Chat\Http\Controllers\Home\Room\SseController;
 use Jiny\Chat\Http\Controllers\Home\ChatFileController;
+use Jiny\Chat\Http\Controllers\Home\Invite\IndexController as InviteIndexController;
+use Jiny\Chat\Http\Controllers\Home\Invite\RegenerateController as InviteRegenerateController;
+use Jiny\Chat\Http\Controllers\Home\Invite\DeleteController as InviteDeleteController;
 
 // 웹 인터페이스 라우트 (JWT 인증 필요)
 Route::middleware(['web', 'jwt.auth'])->prefix('home/chat')->name('home.chat.')->group(function () {
@@ -35,6 +38,18 @@ Route::middleware(['web', 'jwt.auth'])->prefix('home/chat')->name('home.chat.')-
         Route::put('/{roomId}', [\Jiny\Chat\Http\Controllers\Home\Dashboard\ChatEditController::class, 'update'])->name('update');
 
 
+    });
+
+    // 초대링크 관리 라우트
+    Route::prefix('invite')->name('invite.')->group(function () {
+        // 초대링크 관리 페이지
+        Route::get('/', InviteIndexController::class)->name('index');
+
+        // 초대링크 재발급/생성
+        Route::post('/{roomId}/regenerate', InviteRegenerateController::class)->name('regenerate');
+
+        // 초대링크 삭제
+        Route::delete('/{roomId}', InviteDeleteController::class)->name('delete');
     });
 
     // 채팅방 입장/메시지 보기 (SAC)
