@@ -10,6 +10,8 @@
         {{-- @includeIf('jiny-chat::home.room.header') --}}
         @livewire('jiny-chat::chat-header', ['roomId' => $room->id])
 
+
+
         <div class="row">
             {{-- 메시지 영역 --}}
             <div class="col-lg-9">

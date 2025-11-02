@@ -155,6 +155,14 @@ class ChatMessage extends Model
     }
 
     /**
+     * 메시지 파일들
+     */
+    public function files()
+    {
+        return $this->hasMany(ChatFile::class, 'message_id');
+    }
+
+    /**
      * 메시지 읽음 상태
      */
     public function reads()

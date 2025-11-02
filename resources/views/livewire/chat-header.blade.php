@@ -44,10 +44,21 @@
                     </div>
                 </div>
 
-                <div class="d-flex align-items-center">
+                <div class="d-flex align-items-center gap-2">
+
+                    {{-- 채팅방 액션 버튼들 --}}
+                    <div class="btn-group" role="group">
+                        <a href="{{ route('home.chat.room.images', $room->id) }}" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-images me-1"></i>
+                            이미지 갤러리
+                        </a>
+                        {{-- 추후 다른 기능 버튼들 추가 가능 --}}
+                    </div>
+
+
                     <!-- 번역 토글 버튼 (설정에서 분리) -->
                     <button type="button"
-                            class="btn {{ $showTranslations ? 'btn-primary' : 'btn-outline-secondary' }} btn-sm me-2 d-flex align-items-center texttooltip"
+                            class="btn {{ $showTranslations ? 'btn-primary' : 'btn-outline-secondary' }} btn-sm d-flex align-items-center texttooltip"
                             wire:click="toggleTranslations"
                             data-template="translation">
                         <i class="fas fa-language me-1"></i>
@@ -107,6 +118,7 @@
                                 </a></li>
                         </ul>
                     </div>
+
                 </div>
             </div>
         </div>

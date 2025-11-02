@@ -7,6 +7,8 @@ use Jiny\Chat\Http\Controllers\Home\Dashboard\ChatCreateController;
 use Jiny\Chat\Http\Controllers\Home\Room\ShowController;
 use Jiny\Chat\Http\Controllers\Home\Room\MessageController;
 use Jiny\Chat\Http\Controllers\Home\Room\SseController;
+use Jiny\Chat\Http\Controllers\Home\Room\ImageGalleryController;
+use Jiny\Chat\Http\Controllers\Home\Room\ImageDeleteController;
 use Jiny\Chat\Http\Controllers\Home\ChatFileController;
 use Jiny\Chat\Http\Controllers\Home\Invite\IndexController as InviteIndexController;
 use Jiny\Chat\Http\Controllers\Home\Invite\RegenerateController as InviteRegenerateController;
@@ -80,6 +82,17 @@ Route::middleware(['web', 'jwt.auth'])->prefix('home/chat')->name('home.chat.')-
 
         // 참여자 목록 조회
         Route::get('/participants', [SseController::class, 'participants'])->name('participants');
+
+
+    });
+
+    Route::prefix('room/{roomId}')->name('room.')->group(function () {
+
+        // 이미지 갤러리
+        Route::get('/images', ImageGalleryController::class)->name('images');
+
+        // 이미지 파일 삭제 (방장 전용)
+        Route::delete('/images/{fileHash}', [\Jiny\Chat\Http\Controllers\Home\Room\ImageDeleteController::class, 'destroy'])->name('images.delete');
     });
 
     // 채팅방 삭제 (SAC) - AJAX DELETE 요청

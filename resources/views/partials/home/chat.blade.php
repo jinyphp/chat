@@ -11,6 +11,15 @@
             </a>
         </li>
 
+        <!-- 채팅방 생성 -->
+        <li class="nav-item">
+            <a class="nav-link {{ request()->routeIs('home.chat.rooms.create') ? 'active' : '' }}"
+               href="{{ route('home.chat.rooms.create') }}">
+                <i class="fas fa-plus nav-icon"></i>
+                채팅방 생성
+            </a>
+        </li>
+
         <!-- 초대링크 관리 -->
         <li class="nav-item">
             <a class="nav-link {{ request()->routeIs('home.chat.invite.*') ? 'active' : '' }}"
