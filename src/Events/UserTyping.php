@@ -59,7 +59,7 @@ class UserTyping implements ShouldBroadcast
      */
     public function broadcastAs()
     {
-        return 'UserTyping';
+        return 'user.typing';
     }
 
     /**
@@ -68,12 +68,23 @@ class UserTyping implements ShouldBroadcast
     public function broadcastWith()
     {
         return [
+            'type' => 'typing',
             'room_id' => $this->roomId,
             'user_uuid' => $this->userUuid,
             'user_name' => $this->userName,
             'action' => $this->action,
             'timestamp' => now()->toISOString(),
         ];
+    }
+
+    /**
+     * SSE 형식으로 데이터 반환
+     */
+    public function toSseFormat(): string
+    {
+        $data = $this->broadcastWith();
+        return "event: user.typing\n" .
+               "data: " . json_encode($data, JSON_UNESCAPED_UNICODE) . "\n\n";
     }
 
     /**

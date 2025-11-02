@@ -468,7 +468,14 @@ class ChatRoom extends Model
             throw new \Exception('Room code is required for independent database');
         }
 
-        return ChatRoomMessage::createMessage($this->code, $senderUuid, $messageData);
+        \Log::info('ChatRoom::sendMessage 호출', [
+            'room_code' => $this->code,
+            'room_id' => $this->id,
+            'room_created_at' => $this->created_at,
+            'sender_uuid' => $senderUuid
+        ]);
+
+        return ChatRoomMessage::createMessage($this->code, $senderUuid, $messageData, $this->id, $this->created_at);
     }
 
     /**
@@ -480,7 +487,7 @@ class ChatRoom extends Model
             throw new \Exception('Room code is required for independent database');
         }
 
-        return ChatRoomFile::uploadFile($this->code, $file, $uploaderUuid, $messageId);
+        return ChatRoomFile::uploadFile($this->code, $file, $uploaderUuid, $messageId, $this->id, $this->created_at);
     }
 
     /**
@@ -492,7 +499,7 @@ class ChatRoom extends Model
             throw new \Exception('Room code is required for independent database');
         }
 
-        return ChatRoomMessageTranslation::translateMessage($this->code, $messageId, $languageCode, $translatedContent, $options);
+        return ChatRoomMessageTranslation::translateMessage($this->code, $messageId, $languageCode, $translatedContent, $options, $this->id, $this->created_at);
     }
 
     /**

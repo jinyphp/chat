@@ -1,6 +1,11 @@
 {{-- 초대 링크 관리 페이지 --}}
 @extends('jiny-site::layouts.home')
 
+@section('head')
+    <!-- CSRF Token -->
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+@endsection
+
 @push('styles')
     <!-- FontAwesome 아이콘 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -127,6 +132,9 @@
 @endpush
 
 @section('content')
+    <!-- Hidden CSRF Token -->
+    <input type="hidden" id="csrf-token" value="{{ csrf_token() }}">
+
     <div class="content-wrapper px-4 py-4">
         <!-- 페이지 헤더 -->
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -225,27 +233,45 @@
 
                                             <div class="mb-2">
                                                 <label class="form-label small fw-semibold">초대 링크:</label>
-                                                <div class="input-group">
-                                                    <input type="text"
-                                                           class="form-control invite-link"
-                                                           value="{{ url('/chat/invite/' . $room->invite_code) }}"
-                                                           readonly
-                                                           id="invite-link-{{ $room->id }}">
-                                                    <button class="btn btn-outline-secondary"
-                                                            type="button"
-                                                            onclick="copyInviteLink('invite-link-{{ $room->id }}')">
-                                                        <i class="fas fa-copy"></i>
-                                                    </button>
-                                                </div>
+                                                @if($room->invite_code)
+                                                    <div class="input-group">
+                                                        <input type="text"
+                                                               class="form-control invite-link"
+                                                               value="{{ url('/chat/invite/' . $room->invite_code) }}"
+                                                               readonly
+                                                               id="invite-link-{{ $room->id }}">
+                                                        <button class="btn btn-outline-secondary"
+                                                                type="button"
+                                                                onclick="copyInviteLink('invite-link-{{ $room->id }}')">
+                                                            <i class="fas fa-copy"></i>
+                                                        </button>
+                                                    </div>
+                                                @else
+                                                    <div class="alert alert-warning mb-0">
+                                                        <i class="fas fa-exclamation-triangle me-1"></i>
+                                                        초대링크가 생성되지 않았습니다. '초대링크 생성' 버튼을 클릭하여 새로 만드세요.
+                                                    </div>
+                                                @endif
                                             </div>
                                         </div>
 
                                         <div class="col-md-4 text-end">
                                             <div class="d-flex flex-column gap-2">
-                                                <button class="btn btn-sm btn-primary-cms"
-                                                        onclick="regenerateInviteCode({{ $room->id }})">
-                                                    <i class="fas fa-sync-alt me-1"></i> 새로 발급
-                                                </button>
+                                                @if($room->invite_code)
+                                                    <button class="btn btn-sm btn-primary-cms"
+                                                            onclick="regenerateInviteCode({{ $room->id }})">
+                                                        <i class="fas fa-sync-alt me-1"></i> 새로 발급
+                                                    </button>
+                                                    <button class="btn btn-sm btn-danger-cms"
+                                                            onclick="deleteInviteCode({{ $room->id }})">
+                                                        <i class="fas fa-trash me-1"></i> 삭제
+                                                    </button>
+                                                @else
+                                                    <button class="btn btn-sm btn-success"
+                                                            onclick="regenerateInviteCode({{ $room->id }})">
+                                                        <i class="fas fa-plus me-1"></i> 초대링크 생성
+                                                    </button>
+                                                @endif
                                                 <a href="{{ route('home.chat.rooms.edit', $room->id) }}"
                                                    class="btn btn-sm btn-secondary-cms">
                                                     <i class="fas fa-cog me-1"></i> 설정
@@ -411,7 +437,9 @@
         function regenerateInviteCode(roomId) {
             if (confirm('초대 링크를 새로 발급하시겠습니까?\n기존 링크는 더 이상 사용할 수 없게 됩니다.')) {
                 // CSRF 토큰 가져오기
-                const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                const token = document.getElementById('csrf-token')?.value ||
+                             document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ||
+                             '{{ csrf_token() }}';
 
                 fetch(`/home/chat/rooms/${roomId}/regenerate-invite`, {
                     method: 'POST',
@@ -424,12 +452,8 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // 새로운 초대 링크로 업데이트
-                        const input = document.getElementById(`invite-link-${roomId}`);
-                        input.value = data.invite_url;
-
-                        // 성공 메시지
-                        alert('새로운 초대 링크가 발급되었습니다!');
+                        // 페이지 새로고침하여 UI 업데이트
+                        location.reload();
                     } else {
                         alert('초대 링크 발급에 실패했습니다: ' + (data.message || '알 수 없는 오류'));
                     }
@@ -437,6 +461,38 @@
                 .catch(error => {
                     console.error('Error:', error);
                     alert('초대 링크 발급 중 오류가 발생했습니다.');
+                });
+            }
+        }
+
+        function deleteInviteCode(roomId) {
+            if (confirm('초대 링크를 삭제하시겠습니까?\n삭제된 링크는 더 이상 사용할 수 없으며, 복구할 수 없습니다.')) {
+                // CSRF 토큰 가져오기
+                const token = document.getElementById('csrf-token')?.value ||
+                             document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ||
+                             '{{ csrf_token() }}';
+
+                fetch(`/home/chat/rooms/${roomId}/delete-invite`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': token,
+                        'Accept': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // 성공 메시지와 함께 페이지 새로고침
+                        alert('초대 링크가 삭제되었습니다.');
+                        location.reload();
+                    } else {
+                        alert('초대 링크 삭제에 실패했습니다: ' + (data.message || '알 수 없는 오류'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('초대 링크 삭제 중 오류가 발생했습니다.');
                 });
             }
         }

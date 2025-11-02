@@ -41,7 +41,13 @@ class ChatDatabaseManager
     public static function getChatDatabaseFile($roomCode, $roomId = null, $createdAt = null)
     {
         $path = self::getChatDatabasePath($roomCode, $createdAt);
-        $fileName = $roomId ? "room-{$roomId}.sqlite" : "{$roomCode}.sqlite";
+
+        // roomId가 없으면 에러 발생 - 항상 room-{id}.sqlite 형태로만 생성
+        if (!$roomId) {
+            throw new \Exception("Room ID is required for SQLite database file creation. RoomCode: {$roomCode}");
+        }
+
+        $fileName = "room-{$roomId}.sqlite";
         return $path . DIRECTORY_SEPARATOR . $fileName;
     }
 
@@ -52,8 +58,12 @@ class ChatDatabaseManager
     {
         $dbFile = self::getChatDatabaseFile($roomCode, $roomId, $createdAt);
 
-        // 연결명 생성 (roomId가 있으면 우선 사용)
-        $connectionName = $roomId ? 'chat_room_' . $roomId : 'chat_' . $roomCode;
+        // roomId 필수 - 항상 room ID 기반 연결명 사용
+        if (!$roomId) {
+            throw new \Exception("Room ID is required for database connection. RoomCode: {$roomCode}");
+        }
+
+        $connectionName = 'chat_room_' . $roomId;
 
         // 연결 설정
         config(['database.connections.' . $connectionName => [
@@ -291,12 +301,27 @@ class ChatDatabaseManager
      */
     public static function getChatConnection($roomCode, $roomId = null, $createdAt = null)
     {
-        $connectionName = $roomId ? 'chat_room_' . $roomId : 'chat_' . $roomCode;
+        // roomId 필수 - 항상 room ID 기반 연결명 사용
+        if (!$roomId) {
+            throw new \Exception("Room ID is required for database connection. RoomCode: {$roomCode}");
+        }
+
+        $connectionName = 'chat_room_' . $roomId;
+        $dbFile = self::getChatDatabaseFile($roomCode, $roomId, $createdAt);
+
+        \Log::info('ChatDatabaseManager::getChatConnection 호출', [
+            'room_code' => $roomCode,
+            'room_id' => $roomId,
+            'room_id_type' => gettype($roomId),
+            'room_id_is_null' => is_null($roomId),
+            'room_id_is_empty' => empty($roomId),
+            'created_at' => $createdAt,
+            'connection_name' => $connectionName,
+            'db_file' => $dbFile
+        ]);
 
         // 연결이 설정되어 있지 않은 경우 생성
         if (!config("database.connections.{$connectionName}")) {
-            $dbFile = self::getChatDatabaseFile($roomCode, $roomId, $createdAt);
-
             // 파일이 존재하지 않으면 생성
             if (!file_exists($dbFile)) {
                 return self::createChatDatabase($roomCode, $roomId, $createdAt);
@@ -319,9 +344,11 @@ class ChatDatabaseManager
         if (file_exists($dbFile)) {
             unlink($dbFile);
 
-            // 연결 설정 제거
-            $connectionName = $roomId ? 'chat_room_' . $roomId : 'chat_' . $roomCode;
-            config(["database.connections.{$connectionName}" => null]);
+            // 연결 설정 제거 - roomId 필수
+            if ($roomId) {
+                $connectionName = 'chat_room_' . $roomId;
+                config(["database.connections.{$connectionName}" => null]);
+            }
 
             return true;
         }

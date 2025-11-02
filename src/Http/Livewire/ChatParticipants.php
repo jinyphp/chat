@@ -23,7 +23,6 @@ class ChatParticipants extends Component
     // 모달 상태
     public $showAddMemberModal = false;
     public $showInviteModal = false;
-    public $showSettingsModal = false;
     public $showLanguageModal = false;
     public $showEditModal = false;
     public $showRemoveModal = false;
@@ -33,16 +32,6 @@ class ChatParticipants extends Component
     public $memberLanguage = 'ko';
     public $inviteLink = '';
     public $backgroundColor = '#f8f9fa';
-
-    // 방 설정 데이터
-    public $settingsTitle = '';
-    public $settingsDescription = '';
-    public $settingsType = 'public';
-    public $settingsIsPublic = true;
-    public $settingsAllowJoin = true;
-    public $settingsAllowInvite = true;
-    public $settingsPassword = '';
-    public $settingsMaxParticipants = 0;
 
     // 언어 관련
     public $availableLanguages = [];
@@ -81,16 +70,6 @@ class ChatParticipants extends Component
             // ui_settings에서 background_color 로드
             $uiSettings = $this->room->ui_settings ?? [];
             $this->backgroundColor = $uiSettings['background_color'] ?? '#f8f9fa';
-
-            // 방 설정 데이터 로드
-            $this->settingsTitle = $this->room->title ?? '';
-            $this->settingsDescription = $this->room->description ?? '';
-            $this->settingsType = $this->room->type ?? 'public';
-            $this->settingsIsPublic = $this->room->is_public ?? true;
-            $this->settingsAllowJoin = $this->room->allow_join ?? true;
-            $this->settingsAllowInvite = $this->room->allow_invite ?? true;
-            $this->settingsPassword = ''; // 보안상 비밀번호는 빈 값으로 표시
-            $this->settingsMaxParticipants = $this->room->max_participants ?? 0;
         }
     }
 
@@ -392,179 +371,20 @@ class ChatParticipants extends Component
 
     public function generateInviteLink()
     {
-        try {
-            // 기존 활성 토큰이 있는지 확인
-            $existingTokens = ChatInviteToken::getActiveTokensForRoom($this->roomId);
-
-            if ($existingTokens->isNotEmpty()) {
-                // 기존 토큰 사용
-                $inviteToken = $existingTokens->first();
-            } else {
-                // 새 토큰 생성
-                $inviteToken = ChatInviteToken::createInviteToken(
-                    $this->roomId,
-                    $this->room->uuid,
-                    $this->user->uuid,
-                    [
-                        'expires_in_hours' => 24, // 24시간 후 만료
-                        'max_uses' => null, // 무제한 사용
-                        'metadata' => [
-                            'created_from' => 'chat_participants_component',
-                            'creator_name' => $this->participant->name ?? $this->user->name
-                        ]
-                    ]
-                );
-            }
-
-            // 초대 링크 생성
-            $this->inviteLink = route('chat.join', ['token' => $inviteToken->token]);
-            $this->showInviteModal = true;
-
-            \Log::info('초대 링크 생성됨', [
-                'room_id' => $this->roomId,
-                'token' => $inviteToken->token,
-                'expires_at' => $inviteToken->expires_at,
-                'created_by' => $this->user->uuid
-            ]);
-
-        } catch (\Exception $e) {
-            \Log::error('초대 링크 생성 실패', [
-                'room_id' => $this->roomId,
-                'user_uuid' => $this->user->uuid,
-                'error' => $e->getMessage()
-            ]);
-
-            session()->flash('error', '초대 링크 생성 중 오류가 발생했습니다.');
-        }
-    }
-
-    public function showSettings()
-    {
-        $this->showSettingsModal = true;
-    }
-
-    public function updateRoomSettings()
-    {
-        \Log::info('방 설정 업데이트 시작', [
+        \Log::info('generateInviteLink 메서드 호출됨', [
             'room_id' => $this->roomId,
-            'user_uuid' => $this->user->uuid ?? 'unknown',
-            'settings' => [
-                'title' => $this->settingsTitle,
-                'description' => $this->settingsDescription,
-                'type' => $this->settingsType,
-                'is_public' => $this->settingsIsPublic,
-                'allow_join' => $this->settingsAllowJoin,
-                'allow_invite' => $this->settingsAllowInvite,
-                'max_participants' => $this->settingsMaxParticipants,
-                'background_color' => $this->backgroundColor,
-            ]
+            'user_uuid' => $this->user->uuid ?? 'null'
         ]);
 
-        $this->validate([
-            'settingsTitle' => 'required|string|max:255',
-            'settingsDescription' => 'nullable|string|max:1000',
-            'settingsType' => 'required|in:public,private,group',
-            'settingsIsPublic' => 'boolean',
-            'settingsAllowJoin' => 'boolean',
-            'settingsAllowInvite' => 'boolean',
-            'settingsPassword' => 'nullable|string|min:4|max:255',
-            'settingsMaxParticipants' => 'nullable|integer|min:0|max:1000',
-            'backgroundColor' => 'required|regex:/^#[a-fA-F0-9]{6}$/'
-        ]);
+        // 단순화된 테스트: 바로 모달 표시
+        $this->inviteLink = 'https://example.com/invite/test-token';
+        $this->showInviteModal = true;
 
-        try {
-            // 기존 UI 설정 가져오기
-            $uiSettings = $this->room->ui_settings ?? [];
-            $uiSettings['background_color'] = $this->backgroundColor;
-
-            $updateData = [
-                'title' => $this->settingsTitle,
-                'description' => $this->settingsDescription,
-                'type' => $this->settingsType,
-                'is_public' => $this->settingsIsPublic,
-                'allow_join' => $this->settingsAllowJoin,
-                'allow_invite' => $this->settingsAllowInvite,
-                'max_participants' => $this->settingsMaxParticipants ?: 0,
-                'ui_settings' => $uiSettings,
-                'updated_at' => now(),
-            ];
-
-            // 비밀번호가 입력된 경우에만 업데이트
-            if (!empty($this->settingsPassword)) {
-                $updateData['password'] = bcrypt($this->settingsPassword);
-            }
-
-            \Log::info('방 설정 업데이트 데이터', [
-                'room_id' => $this->roomId,
-                'update_data' => $updateData
-            ]);
-
-            $updated = $this->room->update($updateData);
-
-            \Log::info('방 설정 업데이트 결과', [
-                'room_id' => $this->roomId,
-                'updated' => $updated,
-                'room_after_update' => [
-                    'title' => $this->room->title,
-                    'description' => $this->room->description,
-                    'type' => $this->room->type,
-                    'is_public' => $this->room->is_public,
-                    'allow_join' => $this->room->allow_join,
-                    'allow_invite' => $this->room->allow_invite,
-                    'max_participants' => $this->room->max_participants,
-                    'ui_settings' => $this->room->ui_settings,
-                ]
-            ]);
-
-            $this->showSettingsModal = false;
-
-            // 방 설정 변경 이벤트 발송
-            $this->dispatch('roomSettingsUpdated', [
-                'room_id' => $this->roomId,
-                'title' => $this->settingsTitle,
-                'background_color' => $this->backgroundColor
-            ]);
-
-            // 메시지 컴포넌트에 배경색 변경 알림
-            $this->dispatch('backgroundColorChanged', [
-                'color' => $this->backgroundColor
-            ]);
-
-            session()->flash('success', '방 설정이 성공적으로 변경되었습니다.');
-
-            // 방 정보 다시 로드
-            $this->loadRoom();
-
-        } catch (\Exception $e) {
-            \Log::error('방 설정 업데이트 실패', [
-                'room_id' => $this->roomId,
-                'error' => $e->getMessage(),
-                'user_uuid' => $this->user->uuid ?? 'unknown'
-            ]);
-
-            session()->flash('error', '설정 저장 중 오류가 발생했습니다. 다시 시도해 주세요.');
-        }
+        session()->flash('success', '테스트 초대 링크가 생성되었습니다.');
     }
 
-    public function leaveRoom()
-    {
-        try {
-            if ($this->participant) {
-                ChatParticipant::where('room_id', $this->roomId)
-                    ->where('user_uuid', $this->user->uuid)
-                    ->update(['left_at' => now()]);
 
-                $this->dispatch('participantLeft', [
-                    'user_uuid' => $this->user->uuid,
-                    'room_id' => $this->roomId
-                ]);
 
-                return redirect()->route('home.chat.index');
-            }
-        } catch (\Exception $e) {
-            session()->flash('error', '방 나가기 중 오류가 발생했습니다.');
-        }
-    }
 
     public function closeAddMember()
     {
@@ -581,10 +401,6 @@ class ChatParticipants extends Component
         $this->inviteLink = '';
     }
 
-    public function closeSettings()
-    {
-        $this->showSettingsModal = false;
-    }
 
     public function showLanguageSettings($participantId)
     {

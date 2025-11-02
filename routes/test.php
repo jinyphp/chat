@@ -1,7 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Jiny\Chat\Http\Controllers\ChatRoomTestController;
+// use Jiny\Chat\Http\Controllers\_ChatRoomTestController as ChatRoomTestController;
 
 /*
 |--------------------------------------------------------------------------
@@ -12,6 +12,8 @@ use Jiny\Chat\Http\Controllers\ChatRoomTestController;
 |
 */
 
+// 임시로 비활성화
+/*
 Route::prefix('chat/test')->name('chat.test.')->group(function () {
 
     // 테스트 페이지
@@ -54,3 +56,4 @@ Route::prefix('chat/test')->name('chat.test.')->group(function () {
     Route::post('/{roomCode}/optimize', [ChatRoomTestController::class, 'optimizeDatabase'])
         ->name('optimize');
 });
+*/

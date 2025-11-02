@@ -72,8 +72,13 @@ abstract class ChatRoomModel extends Model
     /**
      * 특정 채팅방에 대한 새 쿼리 빌더 생성
      */
-    public static function forRoom($roomCode, $roomId = null, $createdAt = null)
+    public static function forRoom($roomCode, $roomId, $createdAt = null)
     {
+        // roomId 필수 검증
+        if (!$roomId) {
+            throw new \Exception("Room ID is required for forRoom method. RoomCode: {$roomCode}");
+        }
+
         $instance = new static;
         static::setRoomInfo($roomCode, $roomId, $createdAt);
 
@@ -85,15 +90,12 @@ abstract class ChatRoomModel extends Model
     }
 
     /**
-     * 채팅방 전환
+     * 채팅방 전환 (사용 금지 - roomId 필요)
+     * @deprecated Use forRoom() with roomId instead
      */
     public function switchToRoom($roomCode)
     {
-        static::setRoomCode($roomCode);
-        $connectionName = ChatDatabaseManager::getChatConnection($roomCode);
-        $this->setConnection($connectionName);
-
-        return $this;
+        throw new \Exception("switchToRoom method is deprecated. Use forRoom(roomCode, roomId, createdAt) instead. RoomCode: {$roomCode}");
     }
 
     /**
@@ -103,11 +105,24 @@ abstract class ChatRoomModel extends Model
     {
         parent::boot();
 
-        // 모델 생성 시 현재 설정된 채팅방 코드 사용
+        // 모델 생성 시 현재 설정된 채팅방 정보 사용
         static::creating(function ($model) {
-            if (static::$currentRoomCode) {
-                $connectionName = ChatDatabaseManager::getChatConnection(static::$currentRoomCode);
-                $model->setConnection($connectionName);
+            if (static::$currentRoomCode && static::$currentRoomId) {
+                try {
+                    $connectionName = ChatDatabaseManager::getChatConnection(
+                        static::$currentRoomCode,
+                        static::$currentRoomId,
+                        static::$currentCreatedAt
+                    );
+                    $model->setConnection($connectionName);
+                } catch (\Exception $e) {
+                    \Log::warning('ChatRoomModel boot - 연결 생성 실패', [
+                        'room_code' => static::$currentRoomCode,
+                        'room_id' => static::$currentRoomId,
+                        'error' => $e->getMessage()
+                    ]);
+                    // 연결 생성 실패 시 기본 연결 사용
+                }
             }
         });
     }

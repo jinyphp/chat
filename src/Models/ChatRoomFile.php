@@ -63,7 +63,7 @@ class ChatRoomFile extends ChatRoomModel
     /**
      * 파일 업로드 및 저장
      */
-    public static function uploadFile($roomCode, UploadedFile $file, $uploaderUuid, $messageId = null)
+    public static function uploadFile($roomCode, UploadedFile $file, $uploaderUuid, $messageId = null, $roomId = null, $createdAt = null)
     {
         // 사용자 조회 (테스트 환경 호환성을 위해 여러 방법 시도)
         $uploader = null;
@@ -137,11 +137,11 @@ class ChatRoomFile extends ChatRoomModel
                 'sender_name' => $uploader->name,
             ];
 
-            $message = ChatRoomMessage::forRoom($roomCode)->create($messageData);
+            $message = ChatRoomMessage::forRoom($roomCode, $roomId, $createdAt)->create($messageData);
             $fileData['message_id'] = $message->id;
         }
 
-        $chatFile = static::forRoom($roomCode)->create($fileData);
+        $chatFile = static::forRoom($roomCode, $roomId, $createdAt)->create($fileData);
 
         // 메시지와 연결
         if (isset($message)) {
@@ -154,7 +154,7 @@ class ChatRoomFile extends ChatRoomModel
         }
 
         // 채팅방 통계 업데이트
-        static::updateFileStats($roomCode, $fileSize);
+        static::updateFileStats($roomCode, $fileSize, $roomId, $createdAt);
 
         return $chatFile;
     }
@@ -288,23 +288,25 @@ class ChatRoomFile extends ChatRoomModel
     /**
      * 파일 통계 업데이트
      */
-    protected static function updateFileStats($roomCode, $fileSize)
+    protected static function updateFileStats($roomCode, $fileSize, $roomId = null, $createdAt = null)
     {
-        $stats = ChatRoomStats::forRoom($roomCode)->whereDate('date', now())->first();
+        if (class_exists('Jiny\Chat\Models\ChatRoomStats')) {
+            $stats = ChatRoomStats::forRoom($roomCode, $roomId, $createdAt)->whereDate('date', now())->first();
 
-        if ($stats) {
-            $stats->increment('file_count');
-            $stats->increment('file_size_total', $fileSize);
-        } else {
-            ChatRoomStats::forRoom($roomCode)->create([
-                'date' => now()->toDateString(),
-                'message_count' => 0,
-                'participant_count' => 0,
-                'file_count' => 1,
-                'file_size_total' => $fileSize,
-                'hourly_stats' => json_encode(array_fill(0, 24, 0)),
-                'user_activity' => json_encode([]),
-            ]);
+            if ($stats) {
+                $stats->increment('file_count');
+                $stats->increment('file_size_total', $fileSize);
+            } else {
+                ChatRoomStats::forRoom($roomCode, $roomId, $createdAt)->create([
+                    'date' => now()->toDateString(),
+                    'message_count' => 0,
+                    'participant_count' => 0,
+                    'file_count' => 1,
+                    'file_size_total' => $fileSize,
+                    'hourly_stats' => json_encode(array_fill(0, 24, 0)),
+                    'user_activity' => json_encode([]),
+                ]);
+            }
         }
     }
 
@@ -407,5 +409,49 @@ class ChatRoomFile extends ChatRoomModel
             $q->whereNull('expires_at')
               ->orWhere('expires_at', '>', now());
         });
+    }
+
+    /**
+     * 파일 ID로 파일 검색 (모든 SQLite 데이터베이스 검색)
+     */
+    public static function findById($fileId)
+    {
+        try {
+            // 모든 채팅방을 조회하여 각 SQLite 데이터베이스에서 파일 검색
+            $chatRooms = \Jiny\Chat\Models\ChatRoom::all();
+
+            foreach ($chatRooms as $room) {
+                try {
+                    $file = static::forRoom(
+                        $room->code,
+                        $room->id,
+                        $room->created_at
+                    )->find($fileId);
+
+                    if ($file) {
+                        // 파일을 찾았으면 room 정보를 추가
+                        $file->room_code = $room->code;
+                        $file->room_id = $room->id;
+                        $file->room_created_at = $room->created_at;
+                        return $file;
+                    }
+                } catch (\Exception $e) {
+                    // 특정 방의 데이터베이스에서 오류가 발생해도 계속 검색
+                    \Log::debug('Failed to search file in room: ' . $room->code, [
+                        'error' => $e->getMessage(),
+                        'file_id' => $fileId
+                    ]);
+                    continue;
+                }
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            \Log::error('Failed to find file by ID', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 }

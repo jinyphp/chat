@@ -17,6 +17,7 @@ class ChatServiceProvider extends ServiceProvider
         $this->loadRoutesFrom(__DIR__.'/../routes/web.php');
         $this->loadRoutesFrom(__DIR__.'/../routes/home.php');
         $this->loadRoutesFrom(__DIR__.'/../routes/admin.php');
+        $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
 
         // Load test routes (개발 환경에서만)
         if (app()->environment(['local', 'testing'])) {
@@ -50,6 +51,16 @@ class ChatServiceProvider extends ServiceProvider
 
         // Register broadcasting channels
         $this->registerBroadcastingChannels();
+
+        // Register console commands
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                \Jiny\Chat\Console\Commands\CleanupOrphanedChatFiles::class,
+            ]);
+        }
+
+        // Register global helper functions
+        $this->registerGlobalHelpers();
     }
 
     /**
@@ -116,5 +127,17 @@ class ChatServiceProvider extends ServiceProvider
         Broadcast::channel('chat-typing.{roomId}', function ($user, $roomId) use ($auth) {
             return $auth->chatTyping(request(), $roomId);
         });
+    }
+
+    /**
+     * Register global helper functions for chat
+     */
+    protected function registerGlobalHelpers(): void
+    {
+        // 헬퍼 파일 로드
+        $helpersFile = __DIR__ . '/helpers.php';
+        if (file_exists($helpersFile)) {
+            require_once $helpersFile;
+        }
     }
 }

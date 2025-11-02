@@ -43,6 +43,7 @@ class ChatRoomMessage extends ChatRoomModel
         'last_read_at',
         'reactions',
         'reaction_count',
+        'likes',
         'mentions',
         'tags',
     ];
@@ -55,6 +56,7 @@ class ChatRoomMessage extends ChatRoomModel
         'is_pinned' => 'boolean',
         'is_system' => 'boolean',
         'reactions' => 'array',
+        'likes' => 'array',
         'mentions' => 'array',
         'tags' => 'array',
         'edited_at' => 'datetime',
@@ -129,8 +131,31 @@ class ChatRoomMessage extends ChatRoomModel
     /**
      * 새 메시지 생성
      */
-    public static function createMessage($roomCode, $senderUuid, array $data)
+    public static function createMessage($roomCode, $senderUuid, array $data, $roomId, $createdAt = null)
     {
+        \Log::info('ChatRoomMessage::createMessage 호출 - 파라미터 확인', [
+            'room_code' => $roomCode,
+            'room_id' => $roomId,
+            'room_id_type' => gettype($roomId),
+            'room_id_is_null' => is_null($roomId),
+            'room_id_is_empty' => empty($roomId),
+            'room_id_is_numeric' => is_numeric($roomId),
+            'created_at' => $createdAt,
+            'sender_uuid' => $senderUuid,
+            'data_keys' => array_keys($data)
+        ]);
+
+        // roomId 필수 검증 - 더 상세한 검사
+        if (!$roomId || empty($roomId)) {
+            \Log::error('ChatRoomMessage::createMessage - roomId 검증 실패', [
+                'room_code' => $roomCode,
+                'room_id' => $roomId,
+                'room_id_type' => gettype($roomId),
+                'room_id_var_dump' => var_export($roomId, true)
+            ]);
+            throw new \Exception("Room ID is required for message creation. RoomCode: {$roomCode}, RoomId: " . var_export($roomId, true));
+        }
+
         // 발신자 정보 조회
         $sender = null;
         try {
@@ -170,22 +195,58 @@ class ChatRoomMessage extends ChatRoomModel
 
         // 답글인 경우 스레드 정보 설정
         if (isset($data['reply_to_message_id'])) {
-            $replyToMessage = static::forRoom($roomCode)->find($data['reply_to_message_id']);
+            $replyToMessage = static::forRoom($roomCode, $roomId, $createdAt)->find($data['reply_to_message_id']);
             if ($replyToMessage) {
                 $messageData['thread_root_id'] = $replyToMessage->thread_root_id ?? $replyToMessage->id;
             }
         }
 
         // 메시지 생성
-        $message = static::forRoom($roomCode)->create($messageData);
+        $message = static::forRoom($roomCode, $roomId, $createdAt)->create($messageData);
 
         // 스레드 카운트 업데이트
         if ($message->thread_root_id && $message->thread_root_id !== $message->id) {
-            static::forRoom($roomCode)->where('id', $message->thread_root_id)->increment('thread_count');
+            static::forRoom($roomCode, $roomId, $createdAt)->where('id', $message->thread_root_id)->increment('thread_count');
+        }
+
+        // 파일 타입 메시지인 경우 ChatRoomFile 레코드 생성
+        if (in_array($message->type, ['image', 'video', 'audio', 'file', 'document']) && isset($data['media'])) {
+            try {
+                $media = $data['media'];
+
+                $fileData = [
+                    'message_id' => $message->id,
+                    'uploader_uuid' => $senderUuid,
+                    'uploader_name' => $sender->name ?? 'Unknown User',
+                    'original_name' => $media['original_name'] ?? 'unknown',
+                    'stored_name' => $media['file_name'] ?? basename($media['file_path'] ?? ''),
+                    'file_path' => $media['file_path'] ?? '',
+                    'file_type' => $media['file_type'] ?? $message->type,
+                    'mime_type' => $media['mime_type'] ?? '',
+                    'file_size' => $media['file_size'] ?? 0,
+                    'is_public' => true,
+                ];
+
+                // ChatRoomFile 생성
+                \Jiny\Chat\Models\ChatRoomFile::forRoom($roomCode, $roomId, $createdAt)->create($fileData);
+
+                \Log::info('ChatRoomFile 레코드 생성 완료', [
+                    'message_id' => $message->id,
+                    'file_path' => $fileData['file_path'],
+                    'file_type' => $fileData['file_type']
+                ]);
+
+            } catch (\Exception $e) {
+                \Log::error('ChatRoomFile 생성 실패', [
+                    'message_id' => $message->id,
+                    'error' => $e->getMessage(),
+                    'media_data' => $data['media'] ?? null
+                ]);
+            }
         }
 
         // 채팅방 통계 업데이트
-        static::updateRoomStats($roomCode);
+        static::updateRoomStats($roomCode, $roomId, $createdAt);
 
         return $message;
     }
@@ -193,9 +254,14 @@ class ChatRoomMessage extends ChatRoomModel
     /**
      * 시스템 메시지 생성
      */
-    public static function createSystemMessage($roomCode, $content, array $metadata = [])
+    public static function createSystemMessage($roomCode, $content, $roomId, $createdAt = null, array $metadata = [])
     {
-        return static::forRoom($roomCode)->create([
+        // roomId 필수 검증
+        if (!$roomId) {
+            throw new \Exception("Room ID is required for system message creation. RoomCode: {$roomCode}");
+        }
+
+        return static::forRoom($roomCode, $roomId, $createdAt)->create([
             'type' => 'system',
             'content' => $content,
             'metadata' => $metadata,
@@ -338,14 +404,19 @@ class ChatRoomMessage extends ChatRoomModel
     /**
      * 채팅방 통계 업데이트
      */
-    protected static function updateRoomStats($roomCode)
+    protected static function updateRoomStats($roomCode, $roomId, $createdAt = null)
     {
-        $stats = ChatRoomStats::forRoom($roomCode)->whereDate('date', now())->first();
+        // roomId 필수 검증
+        if (!$roomId) {
+            throw new \Exception("Room ID is required for room stats update. RoomCode: {$roomCode}");
+        }
+
+        $stats = ChatRoomStats::forRoom($roomCode, $roomId, $createdAt)->whereDate('date', now())->first();
 
         if ($stats) {
             $stats->increment('message_count');
         } else {
-            ChatRoomStats::forRoom($roomCode)->create([
+            ChatRoomStats::forRoom($roomCode, $roomId, $createdAt)->create([
                 'date' => now()->toDateString(),
                 'message_count' => 1,
                 'participant_count' => 0,
